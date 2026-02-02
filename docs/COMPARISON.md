@@ -2,191 +2,228 @@
 
 ## Open Source vs Commercial Editions
 
-| Feature | QEDMMA-Lite (Free) | QEDMMA-Pro™ (Commercial) |
-|---------|-------------------|--------------------------|
-| **License** | MIT (Open Source) | Commercial License |
-| **Price** | FREE | Starting $50,000 |
-
-### Core Algorithm
-
-| Feature | Lite | Pro |
-|---------|------|-----|
-| IMM Filter (2 models) | ✅ | ✅ |
-| IMM Filter (4 models) | ✅ | ✅ |
-| Constant Velocity Model | ✅ | ✅ |
-| Constant Acceleration Model | ✅ | ✅ |
-| Coordinated Turn Model | ✅ | ✅ |
-| Constant Jerk Model | ✅ | ✅ |
-| Basic Kalman Filter | ✅ | ✅ |
-| Extended Kalman Filter | ✅ | ✅ |
-| **Deep Physics Layer (Layer 2A)** | ❌ | ✅ |
-| **Anomaly Hunter™ (Layer 2B)** | ❌ | ✅ |
-| **Anomaly Divergence Monitor** | ❌ | ✅ |
-
-### TDOA Fusion
-
-| Feature | Lite | Pro |
-|---------|------|-----|
-| Basic TDOA Solver | ✅ | ✅ |
-| Gauss-Newton Optimization | ✅ | ✅ |
-| Doppler Fusion | ❌ | ✅ |
-| **Clock-Bias Estimation** | ❌ | ✅ |
-| **Async Network Support** | ❌ | ✅ |
-| Max Nodes | 6 | 16 |
-
-### FPGA/Hardware
-
-| Feature | Lite | Pro |
-|---------|------|-----|
-| Python Reference | ✅ | ✅ |
-| C++ Reference | ✅ | ✅ |
-| **Synthesizable RTL** | ❌ | ✅ |
-| **Fixed-Point Optimized** | ❌ | ✅ |
-| **AXI4-Stream Interface** | ❌ | ✅ |
-| **Timing Constraints** | ❌ | ✅ |
-| AMD RFSoC Support | ❌ | ✅ |
-| Intel FPGA Support | ❌ | ✅ |
-
-### Performance
-
-| Metric | Lite | Pro |
-|--------|------|-----|
-| Position RMSE (Mach 8, 60g) | ~200m | **< 50m** |
-| Max Trackable G-Load | 60g | **100g+** |
-| Anomaly Detection | ❌ | ✅ |
-| Real-Time FPGA | ❌ | **< 1 μs** |
-| Unconventional Target Tracking | ❌ | ✅ |
-
-### Support & Services
-
-| Feature | Lite | Pro |
-|---------|------|-----|
-| Community Support (GitHub) | ✅ | ✅ |
-| Documentation | Basic | Comprehensive |
-| **Email Support** | ❌ | ✅ (12 months) |
-| **Phone Support** | ❌ | ✅ (Enterprise) |
-| **Integration Assistance** | ❌ | ✅ |
-| **Custom Development** | ❌ | Available |
-| **On-Site Training** | ❌ | Available |
-
-### Compliance & Certification
-
-| Feature | Lite | Pro |
-|---------|------|-----|
-| DO-254 Traceability | ❌ | ✅ |
-| MISRA Compliance | ❌ | ✅ |
-| Export Control Docs | ❌ | ✅ |
-| Safety Analysis | ❌ | Available |
+| Feature | QEDMMA-Lite (Open Source) | QEDMMA-Pro (Commercial) |
+|---------|---------------------------|-------------------------|
+| **License** | MIT | Commercial / AGPL-3.0 |
+| **Price** | Free | Starting $50,000 |
+| **Support** | Community | Dedicated Engineering |
 
 ---
 
-## When to Choose Each Edition
+## Tracking Algorithms
 
-### Choose QEDMMA-Lite (Free) If You:
+| Algorithm | Lite | Pro |
+|-----------|:----:|:---:|
+| Extended Kalman Filter (EKF) | ✅ | ✅ |
+| Unscented Kalman Filter (UKF) | ✅ | ✅ |
+| Cubature Kalman Filter (CKF) | ✅ | ✅ |
+| Square-Root UKF/CKF | ❌ | ✅ |
+| IMM (4 models) | ✅ | ✅ |
+| IMM (N configurable models) | ❌ | ✅ |
+| Variable Structure IMM (VS-IMM) | ❌ | ✅ |
+| Particle Filter | ❌ | ✅ |
+| **Anomaly Hunter™** (Physics-Agnostic) | ❌ | ✅ |
 
-- Are a **researcher or student** exploring tracking algorithms
-- Need a **benchmark tool** to compare against your own algorithms
-- Want to **evaluate** QEDMMA before committing to commercial license
-- Are building a **prototype** or proof-of-concept
-- Have **limited budget** and software-only requirements
-- Don't need real-time FPGA performance
-- Are tracking **conventional targets** only
+### Anomaly Hunter™ Details
 
-### Choose QEDMMA-Pro™ If You:
+| Capability | Description |
+|------------|-------------|
+| Input | Raw sensor data (no physics model required) |
+| Learning | Online adaptation to target behavior |
+| Performance | Tracks UAV swarms, hypersonic vehicles, space debris |
+| Latency | < 1ms per update |
 
-- Need **production-ready FPGA IP** for deployment
-- Require **real-time performance** (< 1 μs latency)
-- Must track **hypersonic threats** with high accuracy
-- Need **anomaly detection** for unconventional targets
-- Operating **distributed radar networks** with timing challenges
-- Require **DO-254 certification** support
-- Need **commercial support** and SLA guarantees
-- Are a **defense contractor** or government agency
+---
+
+## Adaptive Noise Estimation
+
+| Method | Lite | Pro |
+|--------|:----:|:---:|
+| Mehra (Innovation-based) | ✅ | ✅ |
+| Sage-Husa | ✅ | ✅ |
+| Variational Bayesian | ✅ | ✅ |
+| Covariance Matching | ✅ | ✅ |
+| IMM-Adaptive | ✅ | ✅ |
+| Deep Learning Noise Estimator | ❌ | ✅ |
+| Clutter Map Integration | ❌ | ✅ |
+
+---
+
+## FPGA Implementation
+
+| Component | Lite | Pro |
+|-----------|:----:|:---:|
+| Zero-DSP Correlator | ✅ | ✅ |
+| Pulse Compression | ✅ | ✅ |
+| Doppler Processing | ❌ | ✅ |
+| CFAR Detection | ❌ | ✅ |
+| Beamformer | ❌ | ✅ |
+| Channelizer | ❌ | ✅ |
+| Full Signal Chain IP | ❌ | ✅ |
+
+### FPGA Resource Comparison
+
+| Metric | Lite (Zero-DSP only) | Pro (Full Chain) |
+|--------|---------------------|------------------|
+| DSP48 Slices | 0 | ~200 |
+| LUTs | ~2,000 | ~50,000 |
+| BRAM | 0 | ~100 |
+| Estimated Clock | 200 MHz | 300 MHz |
+
+---
+
+## Multi-Sensor Fusion
+
+| Capability | Lite | Pro |
+|------------|:----:|:---:|
+| Single Radar | ✅ | ✅ |
+| Multi-Radar Fusion | ❌ | ✅ |
+| Radar + EO/IR Fusion | ❌ | ✅ |
+| Async Multi-Static | ❌ | ✅ |
+| JDL Fusion Levels 0-4 | ❌ | ✅ |
+| Edge ML Deployment | ❌ | ✅ |
+
+---
+
+## Data Association
+
+| Algorithm | Lite | Pro |
+|-----------|:----:|:---:|
+| Global Nearest Neighbor (GNN) | ✅ | ✅ |
+| Joint Probabilistic (JPDA) | ❌ | ✅ |
+| Multi-Hypothesis (MHT) | ❌ | ✅ |
+| Random Finite Sets (RFS) | ❌ | ✅ |
+
+---
+
+## Deployment & Integration
+
+| Feature | Lite | Pro |
+|---------|:----:|:---:|
+| Python API | ✅ | ✅ |
+| C++ API | ❌ | ✅ |
+| ROS/ROS2 Integration | ❌ | ✅ |
+| DDS Integration | ❌ | ✅ |
+| STANAG 4607/4609 | ❌ | ✅ |
+| Docker Images | ❌ | ✅ |
+| Kubernetes Helm Charts | ❌ | ✅ |
+
+---
+
+## Verification & Certification
+
+| Aspect | Lite | Pro |
+|--------|:----:|:---:|
+| Unit Tests | ✅ | ✅ |
+| Integration Tests | ✅ | ✅ |
+| Cocotb RTL Tests | ✅ | ✅ |
+| DO-254 Artifacts | ❌ | ✅ |
+| DO-178C Artifacts | ❌ | ✅ |
+| Formal Verification | ❌ | ✅ |
+| MISRA Compliance | ❌ | ✅ |
+
+---
+
+## Support & Services
+
+| Service | Lite | Pro |
+|---------|:----:|:---:|
+| GitHub Issues | ✅ | ✅ |
+| Email Support | ❌ | ✅ |
+| Phone Support | ❌ | ✅ |
+| Slack Channel | ❌ | ✅ |
+| Dedicated Engineer | ❌ | ✅ |
+| On-site Training | ❌ | ✅ |
+| Custom Development | ❌ | ✅ |
+
+---
+
+## Pricing Tiers
+
+| Edition | Price | Use Case |
+|---------|-------|----------|
+| **Lite** | Free | Research, Education, Prototyping |
+| **Pro Starter** | $50,000 | Single project, 1 FPGA target |
+| **Pro Team** | $150,000 | Team license, 5 FPGA targets |
+| **Pro Enterprise** | $350,000 | Unlimited, full source, support |
+
+### Volume Discounts
+
+| Quantity | Discount |
+|----------|----------|
+| 2-5 licenses | 10% |
+| 6-10 licenses | 20% |
+| 11+ licenses | Contact us |
 
 ---
 
 ## Upgrade Path
 
 ```
-┌──────────────────┐
-│  QEDMMA-Lite     │     FREE
-│  (Evaluation)    │     ─────────────────────────────────────────
-└────────┬─────────┘
-         │
-         │  Like what you see?
-         │
-         ▼
-┌──────────────────┐
-│  QEDMMA-Pro      │     $50,000+ per project
-│  (Single Project)│     ─────────────────────────────────────────
-└────────┬─────────┘
-         │
-         │  Need more flexibility?
-         │
-         ▼
-┌──────────────────┐
-│  QEDMMA-Pro      │     $200,000 (unlimited products)
-│  (Enterprise)    │     ─────────────────────────────────────────
-└────────┬─────────┘
-         │
-         │  Full suite?
-         │
-         ▼
-┌──────────────────┐
-│  Full Suite      │     $350,000
-│  + Anomaly Hunter│     ─────────────────────────────────────────
-│  + Async Fusion  │
-└──────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    QEDMMA UPGRADE PATH                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  QEDMMA-Lite (Free)                                            │
+│       │                                                         │
+│       ├──▶ Evaluation of Pro features (30-day trial)           │
+│       │                                                         │
+│       ▼                                                         │
+│  QEDMMA-Pro Starter ($50K)                                     │
+│       │                                                         │
+│       ├──▶ Add more FPGA targets                               │
+│       ├──▶ Add sensor types                                    │
+│       │                                                         │
+│       ▼                                                         │
+│  QEDMMA-Pro Enterprise ($350K)                                 │
+│       │                                                         │
+│       ├──▶ Full source code                                    │
+│       ├──▶ Unlimited deployment                                │
+│       └──▶ Custom development available                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ROI Calculator
+## Technical Specifications
 
-### Scenario: Defense Radar System
+### Performance Benchmarks
 
-**Without QEDMMA-Pro:**
-- Track loss rate: 20%
-- Re-acquisition cost per loss: $10,000 (operator time, missed intercepts)
-- Losses per year: 500
-- Annual cost of track loss: **$5,000,000**
+| Scenario | Lite | Pro |
+|----------|------|-----|
+| Single target, 100 Hz update | 0.2 ms | 0.1 ms |
+| 100 targets, 10 Hz update | 15 ms | 5 ms |
+| 80g maneuver tracking error | 30 m RMS | 15 m RMS |
+| Clutter density 10^6 /km³ | N/A | < 1% false tracks |
 
-**With QEDMMA-Pro:**
-- Track loss rate: < 1%
-- Losses per year: 25
-- Annual cost of track loss: **$250,000**
-- **Annual Savings: $4,750,000**
+### Supported Platforms
 
-**License Cost: $200,000 (one-time)**
-**ROI: 23.75x in Year 1**
-
----
-
-### Scenario: Automotive Radar (ADAS)
-
-**Without QEDMMA-Pro:**
-- External tracking IP license: $5/unit
-- Units per year: 1,000,000
-- Annual cost: **$5,000,000**
-
-**With QEDMMA-Pro Enterprise:**
-- License: $200,000 (one-time)
-- Per-unit cost: **$0**
-- **Break-even: 40,000 units**
-- **Year 1 Savings: $4,800,000**
+| Platform | Lite | Pro |
+|----------|:----:|:---:|
+| Linux (x86_64) | ✅ | ✅ |
+| Windows | ✅ | ✅ |
+| macOS | ✅ | ✅ |
+| ARM64 (Jetson, RPi) | ✅ | ✅ |
+| AMD RFSoC | ✅ | ✅ |
+| Intel/Altera FPGA | ❌ | ✅ |
+| Microchip PolarFire | ❌ | ✅ |
 
 ---
 
-## Contact Sales
+## Contact
 
-Ready to upgrade to QEDMMA-Pro? Contact our sales team:
+**Sales & Licensing**
+- Email: mladen@nexellum.com
+- Phone: +385 99 737 5100
+- Web: https://www.nexellum.com
 
-- **Email:** mladen@nexellum.com
-- **Phone:** +385 XX XXX XXXX
-- **Web:** https://www.nexellum.com/contact
-
-**Request a Demo:** https://www.nexellum.com/demo
+**Technical Support**
+- GitHub: https://github.com/mladen1312/qedmma-lite/issues
+- Email: support@nexellum.com
 
 ---
 
-*© 2026 Nexellum. QEDMMA-Pro™ and Anomaly Hunter™ are trademarks of Nexellum.*
+**© 2026 Nexellum d.o.o. All rights reserved.**
+
+*QEDMMA, Anomaly Hunter, and Nexellum are trademarks of Nexellum d.o.o.*
