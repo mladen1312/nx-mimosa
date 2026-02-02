@@ -178,9 +178,9 @@ Enable distributed radar networks to operate cohesively even when precision timi
 
 ---
 
-## 🏢 About Mešter Labs
+## 🏢 About Nexellum
 
-**Mešter Labs** is a defense technology company specializing in advanced radar signal processing and target tracking algorithms. Founded by Dr. Mladen Mešter, a physician and engineer with expertise in FPGA development and RF systems.
+**Nexellum** is a defense technology company specializing in advanced radar signal processing and target tracking algorithms. Founded by Dr. Mladen Mešter, a physician and engineer with expertise in FPGA development and RF systems.
 
 **Our Mission:** Deliver tracking capabilities that protect nations and save lives.
 
@@ -195,16 +195,16 @@ Enable distributed radar networks to operate cohesively even when precision timi
 ## 📞 Contact
 
 **Sales Inquiries:**
-- Email: sales@mester-labs.com
+- Email: mladen@nexellum.com
 - Phone: +385 XX XXX XXXX
 
 **Technical Support (Existing Customers):**
-- Email: support@mester-labs.com
-- Portal: https://support.mester-labs.com
+- Email: support@nexellum.com
+- Portal: https://support.nexellum.com
 
 **General Information:**
-- Website: https://www.mester-labs.com
-- LinkedIn: [Mešter Labs](https://linkedin.com/company/mester-labs)
+- Website: https://www.nexellum.com
+- LinkedIn: [Nexellum](https://linkedin.com/company/mester-labs)
 
 ---
 
@@ -223,7 +223,7 @@ Detailed documentation is available to licensed customers:
 
 ## ⚖️ Legal
 
-QEDMMA-Pro™ and Anomaly Hunter™ are trademarks of Mešter Labs.
+QEDMMA-Pro™ and Anomaly Hunter™ are trademarks of Nexellum.
 
 All IP cores and software are provided under commercial license. Unauthorized distribution, reverse engineering, or use in weapons of mass destruction is strictly prohibited.
 
@@ -232,5 +232,5 @@ Export of this technology may be subject to ITAR, EAR, or equivalent regulations
 ---
 
 <p align="center">
-  <b>© 2026 Mešter Labs. All Rights Reserved.</b>
+  <b>© 2026 Nexellum. All Rights Reserved.</b>
 </p>
