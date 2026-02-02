@@ -1,229 +1,163 @@
-# QEDMMA Product Comparison
+# QEDMMA Feature Comparison: Lite vs Pro
 
-## Open Source vs Commercial Editions
+## Overview
 
-| Feature | QEDMMA-Lite (Open Source) | QEDMMA-Pro (Commercial) |
-|---------|---------------------------|-------------------------|
-| **License** | MIT | Commercial / AGPL-3.0 |
-| **Price** | Free | Starting $50,000 |
-| **Support** | Community | Dedicated Engineering |
+| Feature | QEDMMA-Lite (AGPL) | QEDMMA-Pro (Commercial) |
+|---------|-------------------|------------------------|
+| **License** | AGPL-3.0 (copyleft) | Commercial (proprietary OK) |
+| **Price** | Free | Contact for pricing |
+| **Support** | Community | Priority support |
+| **Updates** | Public releases | Early access + hotfixes |
 
 ---
 
-## Tracking Algorithms
+## Algorithm Comparison
+
+### Kalman Filters
 
 | Algorithm | Lite | Pro |
-|-----------|:----:|:---:|
+|-----------|------|-----|
 | Extended Kalman Filter (EKF) | ✅ | ✅ |
 | Unscented Kalman Filter (UKF) | ✅ | ✅ |
 | Cubature Kalman Filter (CKF) | ✅ | ✅ |
-| Square-Root UKF/CKF | ❌ | ✅ |
-| IMM (4 models) | ✅ | ✅ |
-| IMM (N configurable models) | ❌ | ✅ |
-| Variable Structure IMM (VS-IMM) | ❌ | ✅ |
-| Particle Filter | ❌ | ✅ |
-| **Anomaly Hunter™** (Physics-Agnostic) | ❌ | ✅ |
+| Square-Root CKF | ✅ | ✅ |
+| **Gaussian Process UKF (GP-UKF)** | ❌ | ✅ |
+| **Particle Filter (PF)** | ❌ | ✅ |
+| **Rao-Blackwellized PF** | ❌ | ✅ |
 
-### Anomaly Hunter™ Details
-
-| Capability | Description |
-|------------|-------------|
-| Input | Raw sensor data (no physics model required) |
-| Learning | Online adaptation to target behavior |
-| Performance | Tracks UAV swarms, hypersonic vehicles, space debris |
-| Latency | < 1ms per update |
-
----
-
-## Adaptive Noise Estimation
-
-| Method | Lite | Pro |
-|--------|:----:|:---:|
-| Mehra (Innovation-based) | ✅ | ✅ |
-| Sage-Husa | ✅ | ✅ |
-| Variational Bayesian | ✅ | ✅ |
-| Covariance Matching | ✅ | ✅ |
-| IMM-Adaptive | ✅ | ✅ |
-| Deep Learning Noise Estimator | ❌ | ✅ |
-| Clutter Map Integration | ❌ | ✅ |
-
----
-
-## FPGA Implementation
-
-| Component | Lite | Pro |
-|-----------|:----:|:---:|
-| Zero-DSP Correlator | ✅ | ✅ |
-| Pulse Compression | ✅ | ✅ |
-| Doppler Processing | ❌ | ✅ |
-| CFAR Detection | ❌ | ✅ |
-| Beamformer | ❌ | ✅ |
-| Channelizer | ❌ | ✅ |
-| Full Signal Chain IP | ❌ | ✅ |
-
-### FPGA Resource Comparison
-
-| Metric | Lite (Zero-DSP only) | Pro (Full Chain) |
-|--------|---------------------|------------------|
-| DSP48 Slices | 0 | ~200 |
-| LUTs | ~2,000 | ~50,000 |
-| BRAM | 0 | ~100 |
-| Estimated Clock | 200 MHz | 300 MHz |
-
----
-
-## Multi-Sensor Fusion
-
-| Capability | Lite | Pro |
-|------------|:----:|:---:|
-| Single Radar | ✅ | ✅ |
-| Multi-Radar Fusion | ❌ | ✅ |
-| Radar + EO/IR Fusion | ❌ | ✅ |
-| Async Multi-Static | ❌ | ✅ |
-| JDL Fusion Levels 0-4 | ❌ | ✅ |
-| Edge ML Deployment | ❌ | ✅ |
-
----
-
-## Data Association
-
-| Algorithm | Lite | Pro |
-|-----------|:----:|:---:|
-| Global Nearest Neighbor (GNN) | ✅ | ✅ |
-| Joint Probabilistic (JPDA) | ❌ | ✅ |
-| Multi-Hypothesis (MHT) | ❌ | ✅ |
-| Random Finite Sets (RFS) | ❌ | ✅ |
-
----
-
-## Deployment & Integration
+### Adaptive Estimation
 
 | Feature | Lite | Pro |
-|---------|:----:|:---:|
+|---------|------|-----|
+| Innovation-based R estimation | ✅ | ✅ |
+| Covariance matching | ✅ | ✅ |
+| Sage-Husa adaptive | ✅ | ✅ |
+| **ML hyperparameter optimization** | ❌ | ✅ |
+| **Online model selection** | ❌ | ✅ |
+
+### Multi-Target Tracking
+
+| Algorithm | Lite | Pro |
+|-----------|------|-----|
+| Nearest Neighbor (NN) | ✅ | ✅ |
+| Global Nearest Neighbor (GNN) | ✅ | ✅ |
+| **Joint Probabilistic Data Association (JPDA)** | ❌ | ✅ |
+| **Multi-Hypothesis Tracking (MHT)** | ❌ | ✅ |
+| **Poisson Multi-Bernoulli Mixture (PMBM)** | ❌ | ✅ |
+
+### Track Management
+
+| Feature | Lite | Pro |
+|---------|------|-----|
+| Basic track initiation/deletion | ✅ | ✅ |
+| M-of-N logic | ✅ | ✅ |
+| **Integrated Track Scoring** | ❌ | ✅ |
+| **Track-to-Track Fusion** | ❌ | ✅ |
+| **Distributed Tracking** | ❌ | ✅ |
+
+---
+
+## FPGA Features
+
+| Feature | Lite | Pro |
+|---------|------|-----|
+| Zero-DSP Correlator (VHDL) | ✅ | ✅ |
+| Zero-DSP Correlator (HLS) | ✅ | ✅ |
+| **Pipelined UKF Core** | ❌ | ✅ |
+| **Hardware CKF** | ❌ | ✅ |
+| **AXI4-Stream Interface** | ❌ | ✅ |
+| **Multi-Channel Tracker** | ❌ | ✅ |
+| **Real-Time Scheduler** | ❌ | ✅ |
+
+### Resource Comparison (Zynq UltraScale+)
+
+| IP Core | Lite Available | Pro Features | LUTs | DSPs | Fmax |
+|---------|---------------|--------------|------|------|------|
+| Zero-DSP Correlator | ✅ | - | 2.8K | 0 | 1.2 GHz |
+| UKF Core (4-state) | ❌ | ✅ | 8.5K | 24 | 250 MHz |
+| CKF Core (9-state) | ❌ | ✅ | 15.2K | 48 | 200 MHz |
+| Multi-Target (8 tracks) | ❌ | ✅ | 42K | 96 | 150 MHz |
+
+---
+
+## Software Features
+
+| Feature | Lite | Pro |
+|---------|------|-----|
 | Python API | ✅ | ✅ |
-| C++ API | ❌ | ✅ |
-| ROS/ROS2 Integration | ❌ | ✅ |
-| DDS Integration | ❌ | ✅ |
-| STANAG 4607/4609 | ❌ | ✅ |
-| Docker Images | ❌ | ✅ |
-| Kubernetes Helm Charts | ❌ | ✅ |
+| NumPy/SciPy only dependencies | ✅ | ✅ |
+| **C++ High-Performance Library** | ❌ | ✅ |
+| **MATLAB/Simulink Integration** | ❌ | ✅ |
+| **ROS2 Node** | ❌ | ✅ |
+
+### Performance (100 targets, 10 Hz)
+
+| Metric | Lite (Python) | Pro (C++) |
+|--------|---------------|-----------|
+| UKF cycle time | 2.4 ms | 0.12 ms |
+| CKF cycle time | 1.9 ms | 0.09 ms |
+| JPDA cycle time | N/A | 0.8 ms |
+| Memory usage | 45 MB | 8 MB |
 
 ---
 
-## Verification & Certification
+## Documentation & Support
 
-| Aspect | Lite | Pro |
-|--------|:----:|:---:|
-| Unit Tests | ✅ | ✅ |
-| Integration Tests | ✅ | ✅ |
-| Cocotb RTL Tests | ✅ | ✅ |
-| DO-254 Artifacts | ❌ | ✅ |
-| DO-178C Artifacts | ❌ | ✅ |
-| Formal Verification | ❌ | ✅ |
-| MISRA Compliance | ❌ | ✅ |
-
----
-
-## Support & Services
-
-| Service | Lite | Pro |
-|---------|:----:|:---:|
-| GitHub Issues | ✅ | ✅ |
-| Email Support | ❌ | ✅ |
-| Phone Support | ❌ | ✅ |
-| Slack Channel | ❌ | ✅ |
-| Dedicated Engineer | ❌ | ✅ |
-| On-site Training | ❌ | ✅ |
-| Custom Development | ❌ | ✅ |
+| Item | Lite | Pro |
+|------|------|-----|
+| Algorithm documentation | ✅ | ✅ |
+| API reference | ✅ | ✅ |
+| **Application notes** | ❌ | ✅ |
+| **Integration guides** | ❌ | ✅ |
+| **Training videos** | ❌ | ✅ |
+| Email support | Community | Priority (24h response) |
+| **Dedicated Slack channel** | ❌ | ✅ |
+| **On-site training** | ❌ | ✅ (additional fee) |
 
 ---
 
-## Pricing Tiers
+## Licensing Terms
 
-| Edition | Price | Use Case |
-|---------|-------|----------|
-| **Lite** | Free | Research, Education, Prototyping |
-| **Pro Starter** | $50,000 | Single project, 1 FPGA target |
-| **Pro Team** | $150,000 | Team license, 5 FPGA targets |
-| **Pro Enterprise** | $350,000 | Unlimited, full source, support |
+### QEDMMA-Lite (AGPL-3.0)
 
-### Volume Discounts
+- ✅ Free for open-source projects
+- ✅ Free for academic research
+- ⚠️ Derivative works must be AGPL-licensed
+- ⚠️ Network use triggers copyleft
+- ❌ Cannot be used in proprietary products
 
-| Quantity | Discount |
-|----------|----------|
-| 2-5 licenses | 10% |
-| 6-10 licenses | 20% |
-| 11+ licenses | Contact us |
+### QEDMMA-Pro (Commercial)
 
----
-
-## Upgrade Path
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    QEDMMA UPGRADE PATH                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  QEDMMA-Lite (Free)                                            │
-│       │                                                         │
-│       ├──▶ Evaluation of Pro features (30-day trial)           │
-│       │                                                         │
-│       ▼                                                         │
-│  QEDMMA-Pro Starter ($50K)                                     │
-│       │                                                         │
-│       ├──▶ Add more FPGA targets                               │
-│       ├──▶ Add sensor types                                    │
-│       │                                                         │
-│       ▼                                                         │
-│  QEDMMA-Pro Enterprise ($350K)                                 │
-│       │                                                         │
-│       ├──▶ Full source code                                    │
-│       ├──▶ Unlimited deployment                                │
-│       └──▶ Custom development available                        │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+- ✅ Use in proprietary products
+- ✅ No source code disclosure
+- ✅ Sublicensing available
+- ✅ Patent indemnification
+- ✅ Export compliance support
 
 ---
 
-## Technical Specifications
+## Pricing
 
-### Performance Benchmarks
+| Tier | Annual License | Includes |
+|------|----------------|----------|
+| **Startup** | €5,000 | 1 product, 5 developers |
+| **Professional** | €15,000 | 3 products, 20 developers |
+| **Enterprise** | €50,000 | Unlimited products/developers |
+| **Defense/Gov** | Custom | ITAR/EAR compliance, on-premise |
 
-| Scenario | Lite | Pro |
-|----------|------|-----|
-| Single target, 100 Hz update | 0.2 ms | 0.1 ms |
-| 100 targets, 10 Hz update | 15 ms | 5 ms |
-| 80g maneuver tracking error | 30 m RMS | 15 m RMS |
-| Clutter density 10^6 /km³ | N/A | < 1% false tracks |
-
-### Supported Platforms
-
-| Platform | Lite | Pro |
-|----------|:----:|:---:|
-| Linux (x86_64) | ✅ | ✅ |
-| Windows | ✅ | ✅ |
-| macOS | ✅ | ✅ |
-| ARM64 (Jetson, RPi) | ✅ | ✅ |
-| AMD RFSoC | ✅ | ✅ |
-| Intel/Altera FPGA | ❌ | ✅ |
-| Microchip PolarFire | ❌ | ✅ |
+**Volume discounts available for multi-year commitments.**
 
 ---
 
 ## Contact
 
-**Sales & Licensing**
-- Email: mladen@nexellum.com
-- Phone: +385 99 737 5100
-- Web: https://www.nexellum.com
+**Nexellum d.o.o.**
 
-**Technical Support**
-- GitHub: https://github.com/mladen1312/qedmma-lite/issues
-- Email: support@nexellum.com
+- 📧 Email: mladen@nexellum.com
+- 🌐 Web: [www.nexellum.com](https://www.nexellum.com)
+- 📱 Phone: +385 99 737 5100
+- 📍 Location: Zagreb, Croatia
 
 ---
 
-**© 2026 Nexellum d.o.o. All rights reserved.**
-
-*QEDMMA, Anomaly Hunter, and Nexellum are trademarks of Nexellum d.o.o.*
+*© 2026 Dr. Mladen Mešter / Nexellum. All rights reserved.*
