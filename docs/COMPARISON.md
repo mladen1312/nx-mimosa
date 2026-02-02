@@ -181,12 +181,12 @@
 
 Ready to upgrade to QEDMMA-Pro? Contact our sales team:
 
-- **Email:** sales@mester-labs.com
+- **Email:** mladen@nexellum.com
 - **Phone:** +385 XX XXX XXXX
-- **Web:** https://www.mester-labs.com/contact
+- **Web:** https://www.nexellum.com/contact
 
-**Request a Demo:** https://www.mester-labs.com/demo
+**Request a Demo:** https://www.nexellum.com/demo
 
 ---
 
-*© 2026 Mešter Labs. QEDMMA-Pro™ and Anomaly Hunter™ are trademarks of Mešter Labs.*
+*© 2026 Nexellum. QEDMMA-Pro™ and Anomaly Hunter™ are trademarks of Nexellum.*
