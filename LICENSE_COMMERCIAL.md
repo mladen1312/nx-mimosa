@@ -2,7 +2,7 @@
 
 **Effective Date:** [DATE]
 
-**Licensor:** Mešter Labs d.o.o., Zagreb, Croatia ("Mešter Labs")
+**Licensor:** Nexellum d.o.o., Zagreb, Croatia ("Nexellum")
 
 **Licensee:** [COMPANY NAME] ("Licensee")
 
@@ -27,9 +27,9 @@
 
 ## 2. GRANT OF LICENSE
 
-2.1 **Per-Project License:** Subject to the terms of this Agreement, Mešter Labs grants Licensee a non-exclusive, non-transferable license to use the Licensed IP solely for development and deployment of a single Product ("Licensed Product").
+2.1 **Per-Project License:** Subject to the terms of this Agreement, Nexellum grants Licensee a non-exclusive, non-transferable license to use the Licensed IP solely for development and deployment of a single Product ("Licensed Product").
 
-2.2 **Enterprise License:** [If applicable] Subject to the terms of this Agreement, Mešter Labs grants Licensee a non-exclusive, non-transferable license to use the Licensed IP for unlimited Products within Licensee's organization.
+2.2 **Enterprise License:** [If applicable] Subject to the terms of this Agreement, Nexellum grants Licensee a non-exclusive, non-transferable license to use the Licensed IP for unlimited Products within Licensee's organization.
 
 2.3 **Restrictions:** Licensee shall NOT:
 - Sublicense, distribute, or transfer the Licensed IP to third parties
@@ -42,7 +42,7 @@
 
 ## 3. DELIVERY
 
-3.1 Upon execution of this Agreement and receipt of payment, Mešter Labs shall provide:
+3.1 Upon execution of this Agreement and receipt of payment, Nexellum shall provide:
 - Access to encrypted RTL/source code
 - Integration documentation
 - Reference test vectors
@@ -76,9 +76,9 @@
 
 ## 6. INTELLECTUAL PROPERTY
 
-6.1 **Ownership:** Mešter Labs retains all right, title, and interest in the Licensed IP.
+6.1 **Ownership:** Nexellum retains all right, title, and interest in the Licensed IP.
 
-6.2 **Licensee IP:** Licensee retains ownership of Derivative Works, subject to Mešter Labs' underlying IP rights.
+6.2 **Licensee IP:** Licensee retains ownership of Derivative Works, subject to Nexellum' underlying IP rights.
 
 6.3 **Patents:** This license does not grant any patent rights beyond those necessary to use the Licensed IP as intended.
 
@@ -86,7 +86,7 @@
 
 ## 7. CONFIDENTIALITY
 
-7.1 The Licensed IP constitutes Confidential Information of Mešter Labs.
+7.1 The Licensed IP constitutes Confidential Information of Nexellum.
 
 7.2 Licensee shall protect the Licensed IP with the same degree of care used to protect its own confidential information, but no less than reasonable care.
 
@@ -96,7 +96,7 @@
 
 ## 8. WARRANTIES AND DISCLAIMERS
 
-8.1 Mešter Labs warrants that the Licensed IP will perform substantially as documented for 12 months.
+8.1 Nexellum warrants that the Licensed IP will perform substantially as documented for 12 months.
 
 8.2 **DISCLAIMER:** EXCEPT AS EXPRESSLY PROVIDED, THE LICENSED IP IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. MEŠTER LABS DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
 
@@ -140,7 +140,7 @@
 
 12.4 **Amendment:** This Agreement may only be amended in writing signed by both parties.
 
-12.5 **Assignment:** Licensee may not assign this Agreement without Mešter Labs' prior written consent.
+12.5 **Assignment:** Licensee may not assign this Agreement without Nexellum' prior written consent.
 
 ---
 
