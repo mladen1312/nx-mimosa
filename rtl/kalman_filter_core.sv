@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — Single-Model Kalman Filter Core
+// NX-MIMOSA v3.1 Pro — Single-Model Kalman Filter Core
 // [REQ-RTL-KF-01] Standard Kalman predict/update
 // [REQ-RTL-KF-02] Stores xp, Pp for smoother
 // [REQ-RTL-KF-03] Joseph-form covariance update
@@ -8,7 +8,7 @@
 `timescale 1ns/1ps
 
 module kalman_filter_core
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
