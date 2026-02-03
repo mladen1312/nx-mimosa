@@ -1,55 +1,57 @@
-# QEDMMA v3.1 Pro — Complete RTL Implementation
+# QEDMMA v3.1 Pro RTL
 
-## Overview
+## Target Device
 
-Production-grade SystemVerilog implementation of the QEDMMA True IMM Smoother
-for Xilinx RFSoC ZU28DR @ 250MHz.
+**Xilinx RFSoC ZU48DR** (RFSoC 4x2 Board)
+- Gen 3 RFSoC
+- 4× RF-ADC @ 5 GSPS, 14-bit, 6 GHz bandwidth
+- 2× RF-DAC @ 9.85 GSPS, 14-bit
+- ~930K logic cells, 4,272 DSP48E2, 1,080 BRAM36
+- 100G Ethernet (QSFP28)
 
-**Total Lines of Code: 2,321**
+## Files
 
-## Module Hierarchy
+| File | Lines | Description |
+|------|-------|-------------|
+| `qedmma_pkg.sv` | 113 | Package with types, constants, functions |
+| `qedmma_v31_top.sv` | 390 | Top-level with AXI interfaces |
+| `imm_core.sv` | 452 | IMM filter with mixing |
+| `kalman_filter_core.sv` | 400 | Single-model Kalman filter |
+| `fixed_lag_smoother.sv` | 427 | Per-model RTS smoother |
+| `matrix_multiply_4x4.sv` | 115 | Pipelined matrix multiply |
+| `matrix_inverse_4x4.sv` | 234 | Gauss-Jordan inverse |
+| `matrix_vector_mult.sv` | 99 | Matrix-vector operations |
+| `sincos_lut.sv` | 137 | Sin/cos lookup table |
 
-```
-qedmma_v31_top.sv (389 LOC)
-├── imm_core.sv (452 LOC)
-│   ├── kalman_filter_core.sv (400 LOC) × 3
-│   │   └── matrix_multiply_4x4.sv (115 LOC)
-│   └── sincos_lut.sv (137 LOC) × 2
-└── fixed_lag_smoother.sv (427 LOC)
-    ├── matrix_multiply_4x4.sv (115 LOC)
-    ├── matrix_inverse_4x4.sv (234 LOC)
-    └── matrix_vector_mult.sv (99 LOC)
+**Total: ~2,367 LOC**
 
-Support:
-├── qedmma_pkg.sv (68 LOC) — types and constants
-└── files.f — compilation order
-```
+## Resource Estimate (ZU48DR)
 
-## Key Features
+| Resource | Used | Available | % |
+|----------|------|-----------|---|
+| LUT | ~15,000 | 425,280 | 3.5% |
+| FF | ~11,000 | 850,560 | 1.3% |
+| DSP48E2 | ~48 | 4,272 | 1.1% |
+| BRAM36 | ~40 | 1,080 | 3.7% |
 
-- ✅ **True IMM Smoother**: Per-model RTS with +48% RMSE improvement
-- ✅ **Real Matrix Operations**: G = Pf @ F.T @ inv(Pp)
-- ✅ **4x4 Matrix Inverse**: Gauss-Jordan with regularization
-- ✅ **Sin/Cos LUT**: 256-entry table for CT models
-- ✅ **Fixed-Lag Architecture**: 50-sample circular buffer
-- ✅ **AXI Interfaces**: AXI-Stream I/O, AXI-Lite config
+**Headroom for 8+ parallel trackers!**
 
 ## Build
 
-```tcl
-source scripts/build_qedmma_v31.tcl
+```bash
+cd scripts
+vivado -mode batch -source build_qedmma_v31.tcl
 ```
 
-## License
+## PYNQ Integration
 
-Commercial License — Nexellum d.o.o.
-Contact: mladen@nexellum.com
+The build generates `qedmma_v31.xsa` for use with PYNQ overlay system.
 
-## Verification Status
+```python
+from pynq import Overlay
+ol = Overlay('qedmma_v31.bit')
+qedmma = ol.qedmma_v31_top_0
+```
 
-| Test | Status |
-|------|--------|
-| Syntax (Verilator) | ✅ |
-| Simulation (cocotb) | Pending |
-| Synthesis (Vivado) | Pending |
-| Timing @ 250MHz | Pending |
+---
+© 2026 Nexellum d.o.o. | Commercial License
