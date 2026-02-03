@@ -5,7 +5,7 @@
 // [REQ-RTL-TOP-03] AXI-Lite configuration
 // [REQ-RTL-TOP-04] IMM Core + Fixed-Lag Smoother integration
 //==============================================================================
-// Target: Xilinx RFSoC ZU48DR (RFSoC 4x2 Board) @ 250MHz
+// Target: RFSoC 4x2 Board ZU48DR (RFSoC 4x2 Board) @ 250MHz
 // Author: Dr. Mladen Mešter / Nexellum d.o.o.
 // License: Commercial (qedmma-pro)
 //==============================================================================
