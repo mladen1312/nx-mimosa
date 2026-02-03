@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — 4x4 Matrix Inverse (Gauss-Jordan)
+// NX-MIMOSA v3.1 Pro — 4x4 Matrix Inverse (Gauss-Jordan)
 // [REQ-RTL-INV-01] A_inv = inv(A) using row reduction
 // [REQ-RTL-INV-02] 16-cycle latency (4 pivot + 12 elimination)
 // [REQ-RTL-INV-03] Handles near-singular with regularization
@@ -10,7 +10,7 @@
 `timescale 1ns/1ps
 
 module matrix_inverse_4x4
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
