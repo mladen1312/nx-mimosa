@@ -2,52 +2,47 @@
 
 > **Enterprise-Grade Radar Tracking & FPGA Signal Processing**
 
-[![Commercial License](https://img.shields.io/badge/license-Commercial-blue.svg)](LICENSE_COMMERCIAL.md)
-[![Contact](https://img.shields.io/badge/contact-mladen%40nexellum.com-green.svg)](mailto:mladen@nexellum.com)
+[![Commercial License](https://img.shields.io/badge/license-Commercial-gold.svg)](LICENSE_COMMERCIAL.md)
+[![Version](https://img.shields.io/badge/version-3.0.0-green.svg)]()
 
-## 🚀 Product Overview
+## 🚀 Overview
 
-QEDMMA-Pro is the commercial extension of [QEDMMA-Lite](https://github.com/mladen1312/qedmma-lite), providing:
+QEDMMA-Pro extends [QEDMMA-Lite](https://github.com/mladen1312/qedmma-lite) with:
 
-- **Anomaly Hunter™** - Physics-agnostic tracking for unconventional targets
-- **Full FPGA Signal Chain** - Channelizer, Beamformer, CFAR, Doppler processing
+- **Anomaly Hunter™** - Physics-agnostic tracking (Layer 2B)
+- **Enhanced Filters** - SR-UKF, Adaptive scaling, IUKF, Constraints
 - **Multi-Sensor Fusion** - JDL levels 0-4, async multi-static
-- **Certification Artifacts** - DO-254, DO-178C ready
+- **Full FPGA IP** - Bitstreams for RFSoC 4x2
 
-## 📊 Feature Comparison
+## 📊 Performance
 
-See [docs/COMPARISON.md](docs/COMPARISON.md) for detailed Pro vs Lite comparison.
+| Target | Industry | Lite | **PRO** |
+|--------|:--------:|:----:|:-------:|
+| Fighter | 150m | 33m | **<15m** |
+| Cruise Missile | 200m | 41m | **<20m** |
+| Hypersonic | 2500m | 95m | **<50m** |
+| Physics-Anomalous | Loss | Loss | **<100m** ✨ |
 
-| Feature | Lite | Pro |
+## 🔒 PRO Exclusive Features
+
+| Feature | Lite | PRO |
 |---------|:----:|:---:|
-| IMM/UKF/CKF Tracking | ✅ | ✅ |
-| Zero-DSP Correlator | ✅ | ✅ |
+| IMM/UKF/CKF | ✅ | ✅ |
 | Adaptive Noise | ✅ | ✅ |
-| Anomaly Hunter™ | ❌ | ✅ |
-| Full FPGA Chain | ❌ | ✅ |
-| Multi-Sensor Fusion | ❌ | ✅ |
-| DO-254 Artifacts | ❌ | ✅ |
+| Zero-DSP Correlator | ✅ | ✅ |
+| **Square-Root UKF** | ❌ | ✅ |
+| **Adaptive Sigma Scaling** | ❌ | ✅ |
+| **Iterated UKF (IUKF)** | ❌ | ✅ |
+| **State Constraints** | ❌ | ✅ |
+| **Anomaly Hunter™** | ❌ | ✅ |
+| **Multi-Sensor Fusion** | ❌ | ✅ |
+| **FPGA Bitstreams** | ❌ | ✅ |
+| **DO-254 Artifacts** | ❌ | ✅ |
 
-## 💰 Pricing
+## 📧 Contact
 
-| Edition | Price | Includes |
-|---------|-------|----------|
-| Starter | $50,000 | Single project, 1 FPGA |
-| Team | $150,000 | Team license, 5 FPGAs |
-| Enterprise | $350,000 | Unlimited, full source |
-
-## 📞 Contact
-
-**Dr. Mladen Mešter**
-- Email: mladen@nexellum.com
-- Phone: +385 99 737 5100
-- Web: https://www.nexellum.com
-
-## 🔗 Related
-
-- [QEDMMA-Lite](https://github.com/mladen1312/qedmma-lite) - Open source edition
-- [Nexellum](https://www.nexellum.com) - Company website
+📧 mladen@nexellum.com | 🌐 www.nexellum.com | 📱 +385 99 737 5100
 
 ---
 
-**© 2026 Nexellum d.o.o. All rights reserved.**
+**Open-source alternative:** [QEDMMA-Lite](https://github.com/mladen1312/qedmma-lite) (AGPL-3.0)
