@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — 4x4 Matrix Multiply (Pipelined)
+// NX-MIMOSA v3.1 Pro — 4x4 Matrix Multiply (Pipelined)
 // [REQ-RTL-MAT-01] C = A @ B with DSP48E2 inference
 // [REQ-RTL-MAT-02] 4-cycle latency, fully pipelined
 //==============================================================================
@@ -9,7 +9,7 @@
 `timescale 1ns/1ps
 
 module matrix_multiply_4x4
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
