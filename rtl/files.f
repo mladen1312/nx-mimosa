@@ -1,8 +1,9 @@
-# QEDMMA v3.1 Pro RTL Compilation Order
-# Target: ZU48DR (RFSoC 4x2)
+# NX-MIMOSA RTL Compilation Order
+# Multi-model IMM Optimal Smoothing Algorithm
+# Target: ZU48DR (RFSoC 4x2 / ZCU208)
 
 # Package (must be first)
-qedmma_pkg.sv
+nx_mimosa_pkg.sv
 
 # Utility modules
 sincos_lut.sv
@@ -16,4 +17,4 @@ imm_core.sv
 fixed_lag_smoother.sv
 
 # Top-level
-qedmma_v31_top.sv
+nx_mimosa_top.sv
