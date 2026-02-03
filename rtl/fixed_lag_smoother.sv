@@ -1,18 +1,18 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — Fixed-Lag IMM Smoother (COMPLETE IMPLEMENTATION)
+// NX-MIMOSA v3.1 Pro — Fixed-Lag IMM Smoother (COMPLETE IMPLEMENTATION)
 // [REQ-RTL-SMOOTH-01] Per-model RTS backward pass
 // [REQ-RTL-SMOOTH-02] REAL G = Pf @ F.T @ inv(Pp) computation
 // [REQ-RTL-SMOOTH-03] xs = xf + G @ (xs[k+1] - xp[k+1])
 // [REQ-RTL-SMOOTH-04] Circular buffer with LAG_DEPTH samples
 //==============================================================================
 // Author: Dr. Mladen Mešter / Nexellum d.o.o.
-// License: Commercial (qedmma-pro)
+// License: Commercial (nx_mimosa-pro)
 //==============================================================================
 
 `timescale 1ns/1ps
 
 module fixed_lag_smoother
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
