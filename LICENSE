@@ -1,22 +1,65 @@
-QEDMMA-Pro Commercial License
-==============================
+# QEDMMA Pro Commercial License
 
-Copyright (c) 2024-2026 Nexellum d.o.o.
-All Rights Reserved.
+Copyright (c) 2026 Nexellum d.o.o. All rights reserved.
 
-This software and associated documentation files (the "Software") are 
-proprietary and confidential. Unauthorized copying, distribution, 
-modification, or use of this Software, via any medium, is strictly 
-prohibited without explicit written permission from Nexellum d.o.o.
+## Terms and Conditions
 
-EXPORT CONTROL NOTICE:
-This Software may be subject to export control laws and regulations,
-including but not limited to ITAR and EAR. Export or re-export of this
-Software without proper authorization is prohibited.
+### 1. Grant of License
 
-For licensing inquiries:
-  Email: mladen@nexellum.com
-  Phone: +385 99 737 5100
+Subject to the terms of this Agreement and payment of applicable license fees,
+Nexellum d.o.o. ("Licensor") grants to the licensee ("Licensee") a non-exclusive,
+non-transferable license to use the QEDMMA Pro software ("Software").
 
-Nexellum d.o.o.
-Zagreb, Croatia
+### 2. Restrictions
+
+Licensee shall NOT:
+- Distribute, sublicense, or transfer the Software to third parties
+- Modify, reverse engineer, or create derivative works
+- Remove or alter any proprietary notices
+- Use the Software for competitive analysis
+
+### 3. Intellectual Property
+
+The Software and all copies remain the exclusive property of Licensor.
+This license does not transfer any intellectual property rights.
+
+### 4. Export Compliance
+
+The Software may be subject to U.S. export control laws including ITAR
+and EAR. Licensee agrees to comply with all applicable export regulations.
+
+### 5. Warranty Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND.
+
+### 6. Limitation of Liability
+
+IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+SPECIAL, OR CONSEQUENTIAL DAMAGES.
+
+### 7. Term and Termination
+
+This license is effective until terminated. Licensor may terminate
+this license if Licensee breaches any term.
+
+---
+
+## License Tiers
+
+| Tier | Annual Fee | Rights |
+|------|------------|--------|
+| Development | $15,000 | Evaluation, prototyping |
+| Production | $50,000 | Unlimited deployment |
+| Enterprise | $150,000 | Source escrow, custom support |
+
+---
+
+## Contact
+
+**Nexellum d.o.o.**
+- Email: mladen@nexellum.com
+- Phone: +385 99 737 5100
+
+---
+
+QEDMMA® is a trademark of Nexellum d.o.o.
