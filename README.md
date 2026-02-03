@@ -1,4 +1,4 @@
-# QEDMMA v3.1 Pro — Quantum-Enhanced Dynamically-Managed Multi-Model Algorithm
+# NX-MIMOSA — Multi-model IMM Optimal Smoothing Algorithm
 
 [![License: Commercial](https://img.shields.io/badge/License-Commercial-red.svg)](LICENSE)
 [![RTL: SystemVerilog](https://img.shields.io/badge/RTL-SystemVerilog-blue.svg)]()
@@ -19,7 +19,7 @@
 
 ## 🎯 Overview
 
-QEDMMA Pro is a production-grade radar tracking system featuring the **True IMM (Interacting Multiple Model) Smoother** — a novel algorithm that achieves state-of-the-art accuracy by smoothing each motion model independently before combining with forward mode probabilities.
+**NX-MIMOSA** (Multi-model IMM Optimal Smoothing Algorithm) is a production-grade radar tracking system featuring the **True IMM Smoother** — a novel algorithm that achieves state-of-the-art accuracy by smoothing each motion model independently before combining with forward mode probabilities.
 
 ### Supported Platforms
 
@@ -30,22 +30,26 @@ Both boards use **XCZU48DR** Gen 3 RFSoC — same RTL, different build targets.
 | **RFSoC 4x2** | **$2,499** | 4× 5GSPS | 2× 9.85GSPS | **100G** | Development, PYNQ |
 | **ZCU208** | $13,194 | 8× 5GSPS | 8× 10GSPS | 10G | Production, 8-ch |
 
-### Key Innovation
+### Key Innovation: Per-Model RTS Smoothing
+
+Standard IMM smoothers fail because they smooth the combined state, mixing incompatible dynamics. NX-MIMOSA's **per-model RTS** approach:
 
 ```
-For each model j:
+For each model j ∈ {CV, CT+, CT-}:
     G[j] = P_filt[j] @ F[j].T @ inv(P_pred[j])
     x_smooth[j] = x_filt[j] + G[j] @ (x_smooth[k+1] - x_pred[k+1])
     
 Combined: x_smooth = Σ μ[j] × x_smooth[j]
 ```
 
+**Critical insight**: Uses stored predictions from forward pass, NOT recomputed `F @ x_filt`.
+
 ---
 
 ## 📊 Performance
 
-| Scenario | QEDMMA Pro | Standard IMM | Improvement |
-|----------|------------|--------------|-------------|
+| Scenario | NX-MIMOSA | Standard IMM | Improvement |
+|----------|-----------|--------------|-------------|
 | Missile Terminal (7g) | 1.44m RMSE | 3.24m | **+55%** |
 | SAM Engagement (6g) | 2.39m RMSE | 4.97m | **+52%** |
 | Dogfight BFM (8g) | 1.13m RMSE | 2.25m | **+50%** |
@@ -90,12 +94,12 @@ vivado -mode batch -source build_zcu208.tcl
 ```python
 from pynq import Overlay
 
-ol = Overlay('qedmma_v31_rfsoc4x2.bit')
-qedmma = ol.qedmma_v31_top_0
+ol = Overlay('nx_mimosa_rfsoc4x2.bit')
+mimosa = ol.nx_mimosa_top_0
 
-qedmma.write(0x04, 0x00003298)  # omega
-qedmma.write(0x08, 0x0000199A)  # dt
-qedmma.write(0x00, 0x00000003)  # enable
+mimosa.write(0x04, 0x00003298)  # omega = 0.196 rad/s
+mimosa.write(0x08, 0x0000199A)  # dt = 0.1s
+mimosa.write(0x00, 0x00000003)  # enable + smoother
 ```
 
 ---
@@ -103,14 +107,14 @@ qedmma.write(0x00, 0x00000003)  # enable
 ## 🏗️ Architecture
 
 ```
-qedmma_v31_top.sv (390 LOC)
+nx_mimosa_top.sv (390 LOC)
 ├── imm_core.sv (458 LOC)
 │   ├── kalman_filter_core.sv × 3 models
 │   └── sincos_lut.sv × 2
 ├── fixed_lag_smoother.sv (427 LOC)
 │   ├── matrix_inverse_4x4.sv
 │   └── matrix_multiply_4x4.sv
-└── qedmma_pkg.sv (182 LOC)
+└── nx_mimosa_pkg.sv (182 LOC)
 
 Total: ~2,442 LOC SystemVerilog
 ```
@@ -120,10 +124,12 @@ Total: ~2,442 LOC SystemVerilog
 ## 📁 Repository Structure
 
 ```
-qedmma-pro/
-├── rtl/                         # SystemVerilog RTL
-│   ├── qedmma_pkg.sv            # Dual-board configuration
-│   ├── qedmma_v31_top.sv        # Top-level
+nx-mimosa/
+├── rtl/
+│   ├── nx_mimosa_pkg.sv         # Package + dual-board config
+│   ├── nx_mimosa_top.sv         # Top-level
+│   ├── imm_core.sv              # IMM filter
+│   ├── fixed_lag_smoother.sv    # Per-model RTS smoother
 │   └── ...
 ├── scripts/
 │   ├── build_rfsoc4x2.tcl       # RFSoC 4x2 build
@@ -159,9 +165,11 @@ qedmma-pro/
 ---
 
 <p align="center">
-  <b>QEDMMA Pro — Precision Tracking for Mission-Critical Systems</b>
+  <b>NX-MIMOSA — Multi-model IMM Optimal Smoothing Algorithm</b>
   <br>
-  © 2026 Nexellum d.o.o. All rights reserved.
+  <i>Precision Tracking for Mission-Critical Systems</i>
   <br><br>
-  <i>Commercial Use: Contact mladen@nexellum.com for exemptions.</i>
+  © 2026 Nexellum d.o.o. All rights reserved.
+  <br>
+  Commercial Use: Contact mladen@nexellum.com for exemptions.
 </p>
