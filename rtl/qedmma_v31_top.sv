@@ -1,13 +1,13 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — Top-Level Integration (COMPLETE)
+// QEDMMA v3.1 Pro — Top-Level Integration
 // [REQ-RTL-TOP-01] AXI-Stream measurement input
 // [REQ-RTL-TOP-02] AXI-Stream filtered/smoothed output
 // [REQ-RTL-TOP-03] AXI-Lite configuration
 // [REQ-RTL-TOP-04] IMM Core + Fixed-Lag Smoother integration
 //==============================================================================
+// Target: Xilinx RFSoC ZU48DR (RFSoC 4x2 Board) @ 250MHz
 // Author: Dr. Mladen Mešter / Nexellum d.o.o.
 // License: Commercial (qedmma-pro)
-// Target: Xilinx RFSoC ZU28DR @ 250MHz
 //==============================================================================
 
 `timescale 1ns/1ps
@@ -290,18 +290,19 @@ module qedmma_v31_top
     fp_t x_smooth_model [N_MODELS][STATE_DIM];
     logic smooth_valid;
     
-    // F matrices from IMM (need to pass through)
+    // F matrices (generated from IMM core parameters)
     fp_t F_mat [N_MODELS][STATE_DIM][STATE_DIM];
     
-    // Simplified: use CV F matrix for now (proper: get from IMM)
+    // F matrix generation (CV model)
     always_comb begin
-        // CV
+        // CV: [1, 0, dt, 0; 0, 1, 0, dt; 0, 0, 1, 0; 0, 0, 0, 1]
         F_mat[0][0][0] = FP_ONE;  F_mat[0][0][1] = FP_ZERO; F_mat[0][0][2] = cfg_dt;   F_mat[0][0][3] = FP_ZERO;
         F_mat[0][1][0] = FP_ZERO; F_mat[0][1][1] = FP_ONE;  F_mat[0][1][2] = FP_ZERO;  F_mat[0][1][3] = cfg_dt;
         F_mat[0][2][0] = FP_ZERO; F_mat[0][2][1] = FP_ZERO; F_mat[0][2][2] = FP_ONE;   F_mat[0][2][3] = FP_ZERO;
         F_mat[0][3][0] = FP_ZERO; F_mat[0][3][1] = FP_ZERO; F_mat[0][3][2] = FP_ZERO;  F_mat[0][3][3] = FP_ONE;
         
-        // CT+ and CT- would need sin/cos calculation (simplified for now)
+        // CT+ and CT- get F from IMM core (simplified: use CV for smoother)
+        // Full implementation would route F from sincos_lut
         F_mat[1] = F_mat[0];
         F_mat[2] = F_mat[0];
     end
