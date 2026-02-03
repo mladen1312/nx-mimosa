@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — IMM (Interacting Multiple Model) Core
+// NX-MIMOSA v3.1 Pro — IMM (Interacting Multiple Model) Core
 // [REQ-RTL-IMM-01] 3-model mixing (CV, CT+, CT-)
 // [REQ-RTL-IMM-02] Mode probability update
 // [REQ-RTL-IMM-03] Parallel per-model Kalman filters
@@ -8,7 +8,7 @@
 `timescale 1ns/1ps
 
 module imm_core
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
