@@ -1,6 +1,6 @@
 # QEDMMA Pro Commercial License
 
-Copyright (c) 2026 Nexellum d.o.o. All rights reserved.
+**Copyright (c) 2026 Nexellum d.o.o. All rights reserved.**
 
 ## Terms and Conditions
 
@@ -14,7 +14,7 @@ non-transferable license to use the QEDMMA Pro software ("Software").
 
 Licensee shall NOT:
 - Distribute, sublicense, or transfer the Software to third parties
-- Modify, reverse engineer, or create derivative works
+- Modify, reverse engineer, or create derivative works without written permission
 - Remove or alter any proprietary notices
 - Use the Software for competitive analysis
 
@@ -48,17 +48,38 @@ this license if Licensee breaches any term.
 
 | Tier | Annual Fee | Rights |
 |------|------------|--------|
-| Development | $15,000 | Evaluation, prototyping |
-| Production | $50,000 | Unlimited deployment |
-| Enterprise | $150,000 | Source escrow, custom support |
+| **Development** | $15,000 | Evaluation, prototyping, single developer |
+| **Production** | $50,000 | Unlimited deployment, team license |
+| **Enterprise** | $150,000 | Source escrow, custom support, 5-year term |
+
+## Volume Discounts
+
+| Units | Discount |
+|-------|----------|
+| 10-49 | 10% |
+| 50-99 | 15% |
+| 100+ | 20% |
+
+---
+
+## Commercial Use
+
+**Commercial Use: Contact mladen@nexellum.com for licensing and exemptions.**
+
+For academic or research institutions seeking commercial deployment rights,
+special licensing arrangements are available.
 
 ---
 
 ## Contact
 
 **Nexellum d.o.o.**
-- Email: mladen@nexellum.com
-- Phone: +385 99 737 5100
+
+| | |
+|---|---|
+| **Licensing** | mladen@nexellum.com |
+| **Phone** | +385 99 737 5100 |
+| **Web** | https://nexellum.com |
 
 ---
 
