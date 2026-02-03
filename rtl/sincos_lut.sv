@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — Sin/Cos Lookup Table
+// NX-MIMOSA v3.1 Pro — Sin/Cos Lookup Table
 // [REQ-RTL-LUT-01] 256-entry LUT covering 0 to 2π
 // [REQ-RTL-LUT-02] Linear interpolation for accuracy
 // [REQ-RTL-LUT-03] Quadrant mapping for full range
@@ -8,7 +8,7 @@
 `timescale 1ns/1ps
 
 module sincos_lut
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
