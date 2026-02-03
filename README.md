@@ -11,6 +11,12 @@
 
 ---
 
+## ⚖️ License
+
+**Commercial Use: Contact mladen@nexellum.com for licensing and exemptions.**
+
+---
+
 ## 🎯 Overview
 
 QEDMMA Pro is a production-grade radar tracking system featuring the **True IMM (Interacting Multiple Model) Smoother** — a novel algorithm that achieves state-of-the-art accuracy by smoothing each motion model independently before combining with forward mode probabilities.
@@ -25,8 +31,6 @@ Both boards use **XCZU48DR** Gen 3 RFSoC — same RTL, different build targets.
 | **ZCU208** | $13,194 | 8× 5GSPS | 8× 10GSPS | 10G | Production, 8-ch |
 
 ### Key Innovation
-
-Standard IMM smoothers fail because they smooth the combined state, which mixes incompatible dynamics. QEDMMA's **per-model RTS** approach:
 
 ```
 For each model j:
@@ -67,7 +71,7 @@ Combined: x_smooth = Σ μ[j] × x_smooth[j]
 
 ## 🚀 Quick Start
 
-### Build for RFSoC 4x2 (Recommended)
+### Build for RFSoC 4x2
 
 ```bash
 cd scripts
@@ -86,13 +90,12 @@ vivado -mode batch -source build_zcu208.tcl
 ```python
 from pynq import Overlay
 
-ol = Overlay('qedmma_v31_rfsoc4x2.bit')  # or zcu208
+ol = Overlay('qedmma_v31_rfsoc4x2.bit')
 qedmma = ol.qedmma_v31_top_0
 
-# Configure tracker
-qedmma.write(0x04, 0x00003298)  # omega = 0.196 rad/s
-qedmma.write(0x08, 0x0000199A)  # dt = 0.1s
-qedmma.write(0x00, 0x00000003)  # enable + smoother
+qedmma.write(0x04, 0x00003298)  # omega
+qedmma.write(0x08, 0x0000199A)  # dt
+qedmma.write(0x00, 0x00000003)  # enable
 ```
 
 ---
@@ -107,7 +110,7 @@ qedmma_v31_top.sv (390 LOC)
 ├── fixed_lag_smoother.sv (427 LOC)
 │   ├── matrix_inverse_4x4.sv
 │   └── matrix_multiply_4x4.sv
-└── qedmma_pkg.sv (182 LOC) — dual-board config
+└── qedmma_pkg.sv (182 LOC)
 
 Total: ~2,442 LOC SystemVerilog
 ```
@@ -118,17 +121,15 @@ Total: ~2,442 LOC SystemVerilog
 
 ```
 qedmma-pro/
-├── rtl/
-│   ├── qedmma_pkg.sv           # Dual-board configuration
-│   ├── qedmma_v31_top.sv       # Top-level
-│   ├── imm_core.sv             # IMM filter
-│   ├── fixed_lag_smoother.sv   # RTS smoother
+├── rtl/                         # SystemVerilog RTL
+│   ├── qedmma_pkg.sv            # Dual-board configuration
+│   ├── qedmma_v31_top.sv        # Top-level
 │   └── ...
 ├── scripts/
-│   ├── build_rfsoc4x2.tcl      # RFSoC 4x2 build
-│   └── build_zcu208.tcl        # ZCU208 build
-├── python/                      # Reference implementation
-└── docs/                        # Documentation
+│   ├── build_rfsoc4x2.tcl       # RFSoC 4x2 build
+│   └── build_zcu208.tcl         # ZCU208 build
+├── python/                       # Reference implementation
+└── docs/                         # Documentation
 ```
 
 ---
@@ -140,6 +141,8 @@ qedmma-pro/
 | **Development** | $15,000 | RTL source, Python reference |
 | **Production** | $50,000 | + Unlimited deployment |
 | **Enterprise** | $150,000 | + Source escrow, 5yr support |
+
+**Commercial Use: Contact mladen@nexellum.com for licensing and exemptions.**
 
 ---
 
@@ -159,4 +162,6 @@ qedmma-pro/
   <b>QEDMMA Pro — Precision Tracking for Mission-Critical Systems</b>
   <br>
   © 2026 Nexellum d.o.o. All rights reserved.
+  <br><br>
+  <i>Commercial Use: Contact mladen@nexellum.com for exemptions.</i>
 </p>
