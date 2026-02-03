@@ -450,3 +450,9 @@ module imm_core
     end
 
 endmodule
+
+    //--------------------------------------------------------------------------
+    // F Matrix Output (for smoother)
+    //--------------------------------------------------------------------------
+    // Export F matrices to be used by smoother
+    assign F_out = F;
