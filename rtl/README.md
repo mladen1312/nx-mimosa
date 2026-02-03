@@ -177,3 +177,9 @@ qedmma = ol.qedmma_v31_top_0
 ---
 
 © 2026 Nexellum d.o.o. | Commercial License
+
+---
+
+## ⚖️ License
+
+**Commercial Use: Contact mladen@nexellum.com for licensing and exemptions.**
