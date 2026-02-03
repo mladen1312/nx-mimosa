@@ -1,5 +1,5 @@
 //==============================================================================
-// QEDMMA v3.1 Pro — Matrix-Vector Multiply
+// NX-MIMOSA v3.1 Pro — Matrix-Vector Multiply
 // [REQ-RTL-MV-01] y = M @ x (4x4 matrix, 4x1 vector)
 // [REQ-RTL-MV-02] Single-cycle combinational with DSP inference
 //==============================================================================
@@ -7,7 +7,7 @@
 `timescale 1ns/1ps
 
 module matrix_vector_mult
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 (
     input  logic        clk,
     input  logic        rst_n,
@@ -58,11 +58,11 @@ endmodule
 
 
 //==============================================================================
-// QEDMMA v3.1 Pro — Vector Subtraction
+// NX-MIMOSA v3.1 Pro — Vector Subtraction
 // y = a - b
 //==============================================================================
 module vector_subtract
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 #(
     parameter int VEC_DIM = STATE_DIM
 )(
@@ -79,11 +79,11 @@ endmodule
 
 
 //==============================================================================
-// QEDMMA v3.1 Pro — Vector Addition
+// NX-MIMOSA v3.1 Pro — Vector Addition
 // y = a + b
 //==============================================================================
 module vector_add
-    import qedmma_pkg::*;
+    import nx_mimosa_pkg::*;
 #(
     parameter int VEC_DIM = STATE_DIM
 )(
