@@ -1,0 +1,80 @@
+/* ═══════════════════════════════════════════════════════════════════════════════
+   NX-MIMOSA Custom Documentation Styles
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Brand colors */
+:root {
+    --nx-primary: #2980B9;
+    --nx-secondary: #27AE60;
+    --nx-accent: #E74C3C;
+    --nx-dark: #2C3E50;
+    --nx-light: #ECF0F1;
+}
+
+/* Header styling */
+.wy-side-nav-search {
+    background-color: var(--nx-dark) !important;
+}
+
+.wy-side-nav-search > a {
+    color: var(--nx-light) !important;
+}
+
+/* Navigation accent */
+.wy-menu-vertical li.current > a {
+    border-left: 3px solid var(--nx-secondary) !important;
+}
+
+/* Code blocks */
+.highlight {
+    background-color: #f8f8f8 !important;
+    border-left: 3px solid var(--nx-primary);
+}
+
+/* Tables */
+.wy-table-responsive table {
+    border: 1px solid #e1e4e5;
+}
+
+.wy-table-responsive table th {
+    background-color: var(--nx-dark);
+    color: white;
+}
+
+/* Admonitions */
+.admonition.note {
+    border-left: 4px solid var(--nx-primary);
+}
+
+.admonition.warning {
+    border-left: 4px solid var(--nx-accent);
+}
+
+.admonition.tip {
+    border-left: 4px solid var(--nx-secondary);
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    margin-right: 4px;
+}
+
+.badge-eurocontrol { background-color: #27AE60; color: white; }
+.badge-do178c { background-color: #2980B9; color: white; }
+.badge-asil { background-color: #8E44AD; color: white; }
+
+/* Performance table highlights */
+.performance-pass {
+    color: var(--nx-secondary);
+    font-weight: bold;
+}
+
+/* Footer */
+footer {
+    border-top: 1px solid var(--nx-light);
+    padding-top: 1em;
+}
