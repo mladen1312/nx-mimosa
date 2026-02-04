@@ -1,0 +1,48 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# NX-MIMOSA - Python Dependencies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Core scientific computing
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0
+
+# Data handling
+pandas>=1.3.0
+
+# Visualization (optional)
+matplotlib>=3.4.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-xdist>=3.0.0
+
+# Type checking
+mypy>=1.0.0
+
+# Code quality
+flake8>=6.0.0
+pylint>=2.17.0
+black>=23.0.0
+isort>=5.12.0
+
+# Documentation
+sphinx>=6.0.0
+sphinx-rtd-theme>=1.2.0
+sphinx-autodoc-typehints>=1.23.0
+
+# Build
+build>=0.10.0
+twine>=4.0.0
+wheel>=0.40.0
+
+# FPGA simulation (optional)
+# cocotb>=1.8.0
+# cocotb-test>=0.2.0
+
+# Networking (for output formatters)
+# python-can>=4.2.0  # CAN-FD support
+
+# Development
+ipython>=8.0.0
+jupyter>=1.0.0
