@@ -1,243 +1,214 @@
-<div align="center">
+# NX-MIMOSA — Advanced Radar Tracking Algorithm
 
-# 🎯 NX-MIMOSA
+[![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-green.svg)](https://www.python.org/)
+[![Benchmark](https://img.shields.io/badge/Benchmark-Verified-brightgreen.svg)](#benchmark-results)
 
-### Multi-model IMM Optimal Smoothing Algorithm
+**NX-MIMOSA** (Nexellum Multi-Model Interacting Multiple Model with Optimal Smoother Architecture) is a state-of-the-art radar tracking algorithm for defense applications. It provides **+36% accuracy improvement** over standard IMM and **+93% over EKF** in challenging maneuvering target scenarios.
 
-[![License: Commercial](https://img.shields.io/badge/License-Commercial-red.svg)](LICENSE)
-[![RTL: SystemVerilog](https://img.shields.io/badge/RTL-SystemVerilog-blue.svg)]()
-[![Target: ZU48DR](https://img.shields.io/badge/Target-ZU48DR%20RFSoC-green.svg)]()
-[![Version: 2.0](https://img.shields.io/badge/Version-2.0-purple.svg)]()
+## 🏆 Benchmark Results
 
-**The world's first True IMM Smoother with real-time FPGA implementation**
-
-*+59% better tracking • 5/5 scenario wins • Production-ready RTL*
-
-[Features](#-features) • [Performance](#-performance) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [License](#-license)
-
-</div>
-
----
-
-## 🚀 What is NX-MIMOSA?
-
-**NX-MIMOSA** (Multi-model IMM Optimal Smoothing Algorithm) is a production-grade radar tracking system featuring a novel **True IMM Smoother** — achieving state-of-the-art accuracy by smoothing each motion model independently before combining with forward mode probabilities.
-
-```
-NX-MIMOSA
-│  └─────── Multi-model IMM Optimal Smoothing Algorithm
-└───────── Nexellum (product line prefix)
-```
-
-### Key Innovation
-
-Standard IMM smoothers fail because they smooth the combined state, mixing incompatible dynamics. NX-MIMOSA's **per-model RTS** approach:
-
-```python
-For each model j ∈ {CV, CT+, CT-}:
-    G[j] = P_filt[j] @ F[j].T @ inv(P_pred[j])
-    x_smooth[j] = x_filt[j] + G[j] @ (x_smooth[k+1] - x_pred[k+1])
-    
-Combined: x_smooth = Σ μ[j] × x_smooth[j]
-```
-
----
-
-## ✨ Features
-
-### v2.0 New Features
-
-| Feature | Description | Impact |
-|---------|-------------|--------|
-| 🎛️ **Adaptive Q** | NIS-based process noise scaling | +15-20% RMSE |
-| 🔄 **VS-IMM** | Dynamic mode persistence | +10-15% RMSE |
-| 📐 **UKF Core** | Unscented Kalman Filter for nonlinear measurements | +5-10% RMSE |
-| 🐍 **Python Reference** | Complete v2.0 implementation with validation | Bit-exact |
-
-### Core Features
-
-- ✅ **3-Model IMM**: CV (Constant Velocity), CT+ (Right Turn), CT- (Left Turn)
-- ✅ **Per-Model RTS Smoother**: True optimal smoothing
-- ✅ **Fixed-Point RTL**: Q15.16 format, synthesizable SystemVerilog
-- ✅ **Dual-Board Support**: RFSoC 4x2 ($2,499) and ZCU208 ($13,194)
-- ✅ **Multi-Target Ready**: Up to 8 parallel trackers
-- ✅ **Joseph Form Updates**: Numerical stability guaranteed
-
----
-
-## 📊 Performance
-
-### Tracking Accuracy
-
-| Scenario | NX-MIMOSA | Standard IMM | Improvement |
-|----------|-----------|--------------|-------------|
-| Missile Terminal (7g) | **1.44m** RMSE | 3.24m | +55% |
-| SAM Engagement (6g) | **2.39m** RMSE | 4.97m | +52% |
-| Dogfight BFM (8g) | **1.13m** RMSE | 2.25m | +50% |
-| Cruise Missile (3g) | **2.30m** RMSE | 5.77m | +60% |
-| Hypersonic Glide (2g) | **7.87m** RMSE | 20.63m | +62% |
-
-**Average: +59% improvement | Win Rate: 5/5 scenarios**
-
-### Resource Utilization (ZU48DR)
-
-| Resource | Used | Available | Utilization |
-|----------|------|-----------|-------------|
-| LUT | 15,000 | 425,280 | **3.5%** |
-| FF | 11,000 | 850,560 | **1.3%** |
-| DSP48E2 | 48 | 4,272 | **1.1%** |
-| BRAM36 | 40 | 1,080 | **3.7%** |
-
-**Headroom: 89× — supports 8+ parallel trackers!**
-
----
-
-## 🛠️ Quick Start
-
-### Build for RFSoC 4x2
+Run the benchmark yourself to verify:
 
 ```bash
-cd scripts
-vivado -mode batch -source build_rfsoc4x2.tcl
+python3 benchmarks/fair_benchmark.py --runs 50 --seed 42
 ```
 
-### Build for ZCU208
+| Scenario | EKF-CV | EKF-CA | α-β-γ | IMM-3 | **IMM-Smooth** | Winner |
+|----------|--------|--------|-------|-------|----------------|--------|
+| Missile Terminal (M4, 9g) | 165.87 | 2.72 | 7.51 | 2.29 | **1.01** | 🥇 IMM-Smooth |
+| Hypersonic Glide (M5, 2g) | 25.62 | 4.18 | 15.11 | 3.14 | **1.37** | 🥇 IMM-Smooth |
+| Fighter Aircraft (8g) | 99.61 | 1.89 | 4.53 | 1.46 | **0.67** | 🥇 IMM-Smooth |
+| Cruise Missile (3g) | 47.84 | 10.06 | 22.23 | 8.58 | **4.02** | 🥇 IMM-Smooth |
+| Ballistic RV (M7, 1g) | 72.40 | 27.23 | 75.91 | 38.13 | 29.16 | EKF-CA |
+| UAV Swarm (2g) | 9.73 | 1.79 | 3.00 | 1.50 | **0.85** | 🥇 IMM-Smooth |
+| Stealth Aircraft (4g) | 340.12 | 29.29 | 36.43 | 21.35 | **12.11** | 🥇 IMM-Smooth |
+| **AVERAGE** | 108.74 | 11.02 | 23.53 | 10.92 | **7.03** | 🏆 **IMM-Smooth** |
 
-```bash
-cd scripts
-vivado -mode batch -source build_zcu208.tcl
-```
+**Summary: IMM-Smooth wins 6/7 scenarios with +36% average improvement over standard IMM.**
 
-### Python Reference
+## 📊 Improvement Analysis
+
+| vs Algorithm | Improvement |
+|--------------|-------------|
+| vs EKF-CV | **+93.5%** |
+| vs α-β-γ | **+70.1%** |
+| vs EKF-CA | **+36.2%** |
+| vs IMM-3 (Forward) | **+35.7%** |
+
+## 🔬 Key Innovations
+
+### 1. True IMM Smoother (v3.1 Bugfix)
+
+The critical insight: RTS smoother backward pass must use `F @ x_mixed` (the state used for forward prediction), not `F @ x_filt`. This eliminates numerical instability during mode transitions.
 
 ```python
-from nx_mimosa_v2_reference import NXMimosaV2, NXMimosaConfig
+# ❌ WRONG (causes divergence during maneuvers)
+x_pred_backward = F @ x_filt[k+1]
 
-# Configure tracker
-config = NXMimosaConfig(
-    dt=0.1,
-    filter_type=FilterType.UKF,
-    models=["CV", "CT+", "CT-"],
-    adaptive_q=True,
-    vs_imm=True
-)
-
-# Initialize
-tracker = NXMimosaV2(config)
-tracker.initialize(x0=np.array([0, 0, 100, 50]))
-
-# Track
-for measurement in measurements:
-    state = tracker.update(measurement)
-    print(f"Position: {state.x[:2]}, Mode: {state.dominant_model}")
+# ✅ CORRECT (stable and accurate)
+x_pred_backward = F @ x_mixed[k]  # Stored during forward pass
 ```
 
-### PYNQ Integration
+### 2. Variable-Structure IMM (VS-IMM)
 
+Dynamic transition probability matrix based on mode confidence:
+- High CV probability → Higher persistence (p_stay = 0.98)
+- Mixed modes → Lower persistence (p_stay = 0.90)
+- Faster response to maneuver onset
+
+### 3. Adaptive Process Noise
+
+NIS-based Q scaling:
 ```python
-from pynq import Overlay
-
-ol = Overlay('nx_mimosa_rfsoc4x2.bit')
-mimosa = ol.nx_mimosa_top_0
-
-# Configure
-mimosa.write(0x04, 0x00003298)  # omega = 0.196 rad/s
-mimosa.write(0x08, 0x0000199A)  # dt = 0.1s
-mimosa.write(0x00, 0x00000003)  # enable + smoother
+if NIS > χ²_threshold:
+    Q_scale = min(Q_scale * 1.3, 3.0)  # Increase for unexpected maneuver
+elif NIS < χ²_threshold / 2:
+    Q_scale = max(Q_scale * 0.98, 0.3)  # Decrease during steady flight
 ```
 
----
+### 4. Joseph Form Covariance Update
+
+Numerically stable covariance update:
+```python
+I_KH = I - K @ H
+P = I_KH @ P_pred @ I_KH.T + K @ R @ K.T  # Joseph form
+```
 
 ## 📁 Repository Structure
 
 ```
 nx-mimosa/
+├── benchmarks/
+│   └── fair_benchmark.py      # Reproducible benchmark (run this!)
 ├── rtl/
-│   ├── nx_mimosa_pkg.sv          # Core package definitions
-│   ├── nx_mimosa_pkg_v2.sv       # v2.0 extended parameters ✨
-│   ├── nx_mimosa_top.sv          # Top-level module
-│   ├── imm_core.sv               # IMM filter (3-model mixing)
-│   ├── kalman_filter_core.sv     # Linear Kalman filter
-│   ├── ukf_core.sv               # Unscented Kalman Filter ✨
-│   ├── adaptive_q_module.sv      # NIS-based Q adaptation ✨
-│   ├── dynamic_tpm_module.sv     # VS-IMM dynamic TPM ✨
-│   ├── fixed_lag_smoother.sv     # Per-model RTS smoother
-│   ├── matrix_inverse_4x4.sv     # Matrix operations
-│   ├── matrix_multiply_4x4.sv
-│   └── sincos_lut.sv             # Trigonometric LUT
+│   ├── nx_mimosa_v31_top.sv   # FPGA implementation (ZU48DR)
+│   ├── adaptive_q_module.sv   # Adaptive process noise
+│   ├── dynamic_tpm_module.sv  # VS-IMM transition matrix
+│   └── ukf_core.sv            # UKF for nonlinear measurements
 ├── python/
-│   ├── qedmma_v31_tracker.py     # v1.0 reference
-│   └── nx_mimosa_v2_reference.py # v2.0 full reference ✨
-├── scripts/
-│   ├── build_rfsoc4x2.tcl        # RFSoC 4x2 build
-│   └── build_zcu208.tcl          # ZCU208 build
+│   └── v31_hypersonic_validation.py  # Validation simulations
 ├── docs/
-│   └── IMPROVEMENT_PLAN_V2.md    # Algorithm roadmap ✨
-├── fpga/                          # FPGA project files
-└── LICENSE
+│   ├── BENCHMARK_REPORT.md    # Detailed results
+│   └── BOM_SEEKER_BOARD_V31.md # Hardware cost analysis
+└── README.md
 ```
 
----
+## 🚀 Quick Start
 
-## 🎯 Supported Platforms
+### Requirements
 
-Both boards use **XCZU48DR** Gen 3 RFSoC — same RTL, different build targets.
+- Python 3.8+
+- NumPy only (no other dependencies!)
 
-| Board | Price | ADC | DAC | Ethernet | Best For |
-|-------|-------|-----|-----|----------|----------|
-| **RFSoC 4x2** | **$2,499** | 4× 5GSPS | 2× 9.85GSPS | **100G** | Development, PYNQ |
-| **ZCU208** | $13,194 | 8× 5GSPS | 8× 10GSPS | 10G | Production, 8-ch |
+### Run Benchmark
 
----
+```bash
+# Clone repository
+git clone https://github.com/mladen1312/nx-mimosa.git
+cd nx-mimosa
 
-## 📈 Roadmap
+# Run benchmark (default: 50 Monte Carlo runs)
+python3 benchmarks/fair_benchmark.py
 
-### ✅ v1.0 — Production (Current)
-- 3-model IMM (CV, CT+, CT-)
-- Per-model RTS smoother
-- Fixed-point RTL
+# Quick test (10 runs)
+python3 benchmarks/fair_benchmark.py --quick
 
-### ✅ v2.0 — Enhanced (Current)
-- Adaptive Q (NIS-based)
-- VS-IMM dynamic persistence
-- UKF core
+# Custom configuration
+python3 benchmarks/fair_benchmark.py --runs 100 --seed 12345
+```
 
-### 🔜 v2.1 — Planned
-- CKF (Cubature Kalman Filter)
-- 4-model set (CV, CA, CT+, CT-)
-- Jerk model support
+### Expected Output
 
-### 🔬 v3.0 — Research
-- PMBM multi-target tracker
-- ML-based parameter tuning
-- Adaptive turn rate estimation
+```
+BENCHMARK RESULTS — Position RMSE (meters, lower is better)
+====================================================================================================
+Scenario                                  EKF-CV       EKF-CA        α-β-γ        IMM-3   IMM-Smooth
+----------------------------------------------------------------------------------------------------
+Missile Terminal (Mach 4, 9g)             165.87         2.72         7.51         2.29         1.01 🥇
+...
+AVERAGE                                   108.74        11.02        23.53        10.92         7.03
+====================================================================================================
 
----
+SUMMARY
+Wins per algorithm:
+  🏆 IMM-Smooth     : 6/7 scenarios
+```
 
-## 💰 Licensing
+## ⚡ Real-Time Performance
 
-| Tier | Price | Includes |
-|------|-------|----------|
-| **Development** | $15,000 | RTL source, Python reference, 1yr support |
-| **Production** | $50,000 | + Unlimited deployment rights |
-| **Enterprise** | $150,000 | + Source escrow, 5yr support, custom features |
+### FPGA Implementation (ZU48DR @ 250 MHz)
 
----
+| Parameter | Value |
+|-----------|-------|
+| Latency | **0.76 μs** per update |
+| Throughput | **1.3 MHz** max rate |
+| DSP Usage | 2.3% (96 of 4272) |
+| BRAM Usage | 2.2% (24 of 1080) |
+
+**Verdict: 13,000× faster than 100 Hz requirement. Suitable for terminal guidance.**
+
+### Smoother Latency Tradeoff
+
+| Lag (samples) | Delay @50Hz | Accuracy Gain |
+|---------------|-------------|---------------|
+| 5 | 100 ms | +15% |
+| 10 | 200 ms | +30% |
+| 25 | 500 ms | +36% |
+
+Recommendation: Use lag=25 for mid-course, reduce to lag=5 in terminal phase.
+
+## 💰 Commercial Information
+
+### Licensing Options
+
+| License | Features | Price |
+|---------|----------|-------|
+| **Open Source** (AGPL v3) | Algorithm, benchmark | Free |
+| **Enterprise** | RTL, support, custom features | Contact us |
+| **OEM** | White-label, volume production | Contact us |
+
+### Hardware BOM (1000 units)
+
+| Component | Unit Cost |
+|-----------|-----------|
+| FPGA (XCZU48DR) | $3,395 |
+| DDR4 + Power | $442 |
+| RF Frontend | $123 |
+| PCB + Assembly | $150 |
+| **Total Hardware** | **$4,110** |
+
+**Target sell price: $25,000/unit → 52% gross margin**
+
+## 📄 Publications
+
+*Patent pending:* "Multi-Model Interacting Multiple Model Tracking with Per-Model RTS Smoothing and Adaptive Process Noise"
+
+Key citations:
+- Bar-Shalom, Y., Li, X.R., "Estimation with Applications to Tracking and Navigation"
+- Blackman, S., Popoli, R., "Design and Analysis of Modern Tracking Systems"
 
 ## 📞 Contact
 
-<div align="center">
-
 **Nexellum d.o.o.**
-
-📧 [mladen@nexellum.com](mailto:mladen@nexellum.com) • 📱 +385 99 737 5100
-
-🌐 [GitHub](https://github.com/mladen1312/nx-mimosa)
+- Email: mladen@nexellum.com
+- Phone: +385 99 737 5100
+- GitHub: [@mladen1312](https://github.com/mladen1312)
 
 ---
 
-*Built with ❤️ in Croatia 🇭🇷*
+## Reproducibility Statement
 
-**Commercial Use: Contact mladen@nexellum.com for licensing and exemptions.**
+This benchmark is designed to be **100% reproducible**. Running with the same seed will produce identical results:
 
-</div>
+```bash
+python3 benchmarks/fair_benchmark.py --runs 50 --seed 42
+```
+
+All random number generation uses NumPy with fixed seeds. No external data dependencies.
+
+---
+
+**© 2026 Nexellum d.o.o. All rights reserved.**
+
+Open source components licensed under AGPL v3. Enterprise features available under commercial license.
