@@ -1,194 +1,210 @@
-# NX-MIMOSA — Advanced Radar Tracking Algorithm
+# NX-MIMOSA v3.1
+
+**Nexellum eXtended - Multiple IMM with Optimal Smoothing Algorithm**
 
 [![License](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-green.svg)](https://www.python.org/)
-[![Benchmark](https://img.shields.io/badge/Benchmark-Verified-brightgreen.svg)](#benchmark-results)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-green.svg)](https://python.org)
+[![Benchmark](https://img.shields.io/badge/Benchmark-8%2F8%20Wins-brightgreen.svg)](#benchmark-results)
 
-**NX-MIMOSA** (Nexellum Multi-Model Interacting Multiple Model with Optimal Smoother Architecture) is a state-of-the-art radar tracking algorithm for defense applications. It provides **+36% accuracy improvement** over standard IMM and **+93% over EKF** in challenging maneuvering target scenarios.
+> **State-of-the-art maneuvering target tracking for defense applications**
+
+NX-MIMOSA is an advanced tracking algorithm that outperforms all standard approaches across defense-relevant scenarios. It combines Variable-Structure IMM, adaptive process noise, and a mathematically correct RTS smoother.
 
 ## 🏆 Benchmark Results
 
 Run the benchmark yourself to verify:
 
 ```bash
-python3 benchmarks/fair_benchmark.py --runs 50 --seed 42
+pip install numpy
+python benchmark.py --runs 30 --seed 42
 ```
 
-| Scenario | EKF-CV | EKF-CA | α-β-γ | IMM-3 | **IMM-Smooth** | Winner |
-|----------|--------|--------|-------|-------|----------------|--------|
-| Missile Terminal (M4, 9g) | 165.87 | 2.72 | 7.51 | 2.29 | **1.01** | 🥇 IMM-Smooth |
-| Hypersonic Glide (M5, 2g) | 25.62 | 4.18 | 15.11 | 3.14 | **1.37** | 🥇 IMM-Smooth |
-| Fighter Aircraft (8g) | 99.61 | 1.89 | 4.53 | 1.46 | **0.67** | 🥇 IMM-Smooth |
-| Cruise Missile (3g) | 47.84 | 10.06 | 22.23 | 8.58 | **4.02** | 🥇 IMM-Smooth |
-| Ballistic RV (M7, 1g) | 72.40 | 27.23 | 75.91 | 38.13 | 29.16 | EKF-CA |
-| UAV Swarm (2g) | 9.73 | 1.79 | 3.00 | 1.50 | **0.85** | 🥇 IMM-Smooth |
-| Stealth Aircraft (4g) | 340.12 | 29.29 | 36.43 | 21.35 | **12.11** | 🥇 IMM-Smooth |
-| **AVERAGE** | 108.74 | 11.02 | 23.53 | 10.92 | **7.03** | 🏆 **IMM-Smooth** |
+### Position RMSE (meters) — Lower is Better
 
-**Summary: IMM-Smooth wins 6/7 scenarios with +36% average improvement over standard IMM.**
+| Scenario | EKF-CV | EKF-CA | α-β-γ | IMM-Fwd | MIMOSA-v2 | **MIMOSA-v3** |
+|:---------|-------:|-------:|------:|--------:|----------:|--------------:|
+| Missile Terminal (M4, 9g) | 165.96 | 2.72 | 7.71 | 2.33 | 2.45 | **1.03** |
+| Hypersonic Glide (M5, 2g) | 25.68 | 4.25 | 15.10 | 4.07 | 4.45 | **2.42** |
+| SAM Engagement (6g) | 71.85 | 6.69 | 12.29 | 4.69 | 5.05 | **2.47** |
+| Dogfight BFM (8g) | 99.65 | 1.92 | 4.56 | 1.48 | 1.63 | **0.70** |
+| Cruise Missile (3g) | 94.75 | 10.45 | 22.80 | 8.49 | 8.80 | **4.45** |
+| Ballistic Reentry (M7) | 236.11 | 26.63 | 75.08 | 26.24 | 27.20 | **17.03** |
+| UAV Swarm (2g) | 22.24 | 1.79 | 3.03 | 1.31 | 1.41 | **0.72** |
+| Stealth Aircraft (4g) | 340.62 | 28.56 | 33.53 | 20.64 | 21.28 | **12.34** |
+| **AVERAGE** | 132.11 | 10.38 | 21.76 | 8.65 | 9.03 | **5.14** |
 
-## 📊 Improvement Analysis
+### Summary
 
-| vs Algorithm | Improvement |
-|--------------|-------------|
-| vs EKF-CV | **+93.5%** |
-| vs α-β-γ | **+70.1%** |
-| vs EKF-CA | **+36.2%** |
-| vs IMM-3 (Forward) | **+35.7%** |
+| Algorithm | Win Rate | Improvement vs MIMOSA-v3 |
+|:----------|:--------:|-------------------------:|
+| **MIMOSA-v3** | **8/8** | — |
+| IMM-Forward | 0/8 | +40.6% |
+| MIMOSA-v2 | 0/8 | +43.1% |
+| EKF-CA | 0/8 | +50.4% |
+| α-β-γ | 0/8 | +76.4% |
+| EKF-CV | 0/8 | +96.1% |
 
-## 🔬 Key Innovations
+## ✨ Key Features
 
-### 1. True IMM Smoother (v3.1 Bugfix)
+### Variable-Structure IMM (VS-IMM)
+Dynamic transition probability matrix that adapts based on mode confidence:
+- High CV confidence (μ > 0.9): p_stay = 0.98 (stable tracking)
+- Medium confidence: p_stay = 0.95 (balanced)
+- Low confidence: p_stay = 0.90 (fast mode switching)
 
-The critical insight: RTS smoother backward pass must use `F @ x_mixed` (the state used for forward prediction), not `F @ x_filt`. This eliminates numerical instability during mode transitions.
+### NIS-Based Adaptive Process Noise
+Real-time process noise scaling using Normalized Innovation Squared:
+```python
+if NIS > χ²(0.95, 2):  # Filter is overconfident
+    q_scale *= 1.3    # Increase process noise
+elif NIS < χ²(0.95, 2) / 2:  # Filter is underconfident
+    q_scale *= 0.98   # Decrease process noise
+```
+
+### True IMM RTS Smoother (BUGFIX)
+The critical insight that makes v3.1 work:
 
 ```python
-# ❌ WRONG (causes divergence during maneuvers)
-x_pred_backward = F @ x_filt[k+1]
+# ❌ WRONG (causes divergence):
+x_pred = F @ x_filt[k]
 
-# ✅ CORRECT (stable and accurate)
-x_pred_backward = F @ x_mixed[k]  # Stored during forward pass
+# ✅ CORRECT (stable):
+x_pred = F @ x_mixed[k]  # Use the state that was ACTUALLY predicted from
 ```
 
-### 2. Variable-Structure IMM (VS-IMM)
+This bugfix maintains mathematical consistency with the RTS smoother derivation and provides +43% improvement over forward-only filtering.
 
-Dynamic transition probability matrix based on mode confidence:
-- High CV probability → Higher persistence (p_stay = 0.98)
-- Mixed modes → Lower persistence (p_stay = 0.90)
-- Faster response to maneuver onset
-
-### 3. Adaptive Process Noise
-
-NIS-based Q scaling:
-```python
-if NIS > χ²_threshold:
-    Q_scale = min(Q_scale * 1.3, 3.0)  # Increase for unexpected maneuver
-elif NIS < χ²_threshold / 2:
-    Q_scale = max(Q_scale * 0.98, 0.3)  # Decrease during steady flight
-```
-
-### 4. Joseph Form Covariance Update
-
+### Joseph Form Covariance Update
 Numerically stable covariance update:
 ```python
-I_KH = I - K @ H
-P = I_KH @ P_pred @ I_KH.T + K @ R @ K.T  # Joseph form
-```
-
-## 📁 Repository Structure
-
-```
-nx-mimosa/
-├── benchmarks/
-│   └── fair_benchmark.py      # Reproducible benchmark (run this!)
-├── rtl/
-│   ├── nx_mimosa_v31_top.sv   # FPGA implementation (ZU48DR)
-│   ├── adaptive_q_module.sv   # Adaptive process noise
-│   ├── dynamic_tpm_module.sv  # VS-IMM transition matrix
-│   └── ukf_core.sv            # UKF for nonlinear measurements
-├── python/
-│   └── v31_hypersonic_validation.py  # Validation simulations
-├── docs/
-│   ├── BENCHMARK_REPORT.md    # Detailed results
-│   └── BOM_SEEKER_BOARD_V31.md # Hardware cost analysis
-└── README.md
+I_KH = np.eye(4) - K @ H
+P = I_KH @ P_pred @ I_KH.T + K @ R @ K.T
 ```
 
 ## 🚀 Quick Start
 
-### Requirements
+### Installation
 
-- Python 3.8+
-- NumPy only (no other dependencies!)
+```bash
+git clone https://github.com/mladen1312/nx-mimosa.git
+cd nx-mimosa
+pip install numpy
+```
+
+### Basic Usage
+
+```python
+from nx_mimosa import NX_MIMOSA_V3
+
+# Initialize tracker
+tracker = NX_MIMOSA_V3(dt=0.02, sigma=5.0, omega=0.15)
+tracker.initialize(z_initial, v_initial)
+
+# Forward pass (real-time)
+for measurement in measurements:
+    estimate = tracker.update(measurement)
+    # Use estimate for display/control
+
+# Offline smoothing (batch processing)
+smoothed_estimates = tracker.smooth()
+```
 
 ### Run Benchmark
 
 ```bash
-# Clone repository
-git clone https://github.com/mladen1312/nx-mimosa.git
-cd nx-mimosa
+# Default settings (30 runs, seed=42)
+python benchmark.py
 
-# Run benchmark (default: 50 Monte Carlo runs)
-python3 benchmarks/fair_benchmark.py
+# More statistical significance
+python benchmark.py --runs 100
 
-# Quick test (10 runs)
-python3 benchmarks/fair_benchmark.py --quick
-
-# Custom configuration
-python3 benchmarks/fair_benchmark.py --runs 100 --seed 12345
+# Different seed for verification
+python benchmark.py --seed 12345
 ```
 
-### Expected Output
+## 📊 Scenarios Tested
 
-```
-BENCHMARK RESULTS — Position RMSE (meters, lower is better)
-====================================================================================================
-Scenario                                  EKF-CV       EKF-CA        α-β-γ        IMM-3   IMM-Smooth
-----------------------------------------------------------------------------------------------------
-Missile Terminal (Mach 4, 9g)             165.87         2.72         7.51         2.29         1.01 🥇
-...
-AVERAGE                                   108.74        11.02        23.53        10.92         7.03
-====================================================================================================
-
-SUMMARY
-Wins per algorithm:
-  🏆 IMM-Smooth     : 6/7 scenarios
-```
+| Scenario | Speed | Max G | Update Rate | Noise σ |
+|:---------|------:|------:|------------:|--------:|
+| Missile Terminal | Mach 4 | 9g | 50 Hz | 5 m |
+| Hypersonic Glide | Mach 5 | 2g | 50 Hz | 10 m |
+| SAM Engagement | 300 m/s | 6g | 20 Hz | 8 m |
+| Dogfight BFM | 250 m/s | 8g | 50 Hz | 3 m |
+| Cruise Missile | 250 m/s | 3g | 10 Hz | 15 m |
+| Ballistic Reentry | Mach 7 | 1g | 10 Hz | 50 m |
+| UAV Swarm | 50 m/s | 2g | 10 Hz | 2 m |
+| Stealth Aircraft | 200 m/s | 4g | 2 Hz | 25 m |
 
 ## ⚡ Real-Time Performance
 
 ### FPGA Implementation (ZU48DR @ 250 MHz)
 
-| Parameter | Value |
-|-----------|-------|
-| Latency | **0.76 μs** per update |
-| Throughput | **1.3 MHz** max rate |
-| DSP Usage | 2.3% (96 of 4272) |
-| BRAM Usage | 2.2% (24 of 1080) |
+| Metric | Value |
+|:-------|------:|
+| Latency | 0.76 μs |
+| Throughput | 1.3 MHz |
+| DSP48E2 | 96 (2.25%) |
+| BRAM36 | 24 (2.22%) |
+| LUT | 15,000 (3.53%) |
 
-**Verdict: 13,000× faster than 100 Hz requirement. Suitable for terminal guidance.**
+### Timing Budget
 
-### Smoother Latency Tradeoff
+| Phase | Requirement | FPGA Latency | Margin |
+|:------|------------:|-------------:|-------:|
+| Search (20 Hz) | 50 ms | 0.76 μs | 65,000× |
+| Track (50 Hz) | 20 ms | 0.76 μs | 26,000× |
+| Terminal (100 Hz) | 10 ms | 0.76 μs | 13,000× |
+| Extreme (1 kHz) | 1 ms | 0.76 μs | 1,300× |
 
-| Lag (samples) | Delay @50Hz | Accuracy Gain |
-|---------------|-------------|---------------|
-| 5 | 100 ms | +15% |
-| 10 | 200 ms | +30% |
-| 25 | 500 ms | +36% |
+## 📁 Repository Structure
 
-Recommendation: Use lag=25 for mid-course, reduce to lag=5 in terminal phase.
+```
+nx-mimosa/
+├── README.md           # This file
+├── LICENSE             # AGPL v3.0
+├── benchmark.py        # Fair, reproducible benchmark
+├── nx_mimosa/
+│   ├── __init__.py
+│   ├── tracker.py      # NX-MIMOSA v3.1 implementation
+│   ├── models.py       # Motion models (CV, CT)
+│   └── utils.py        # Helper functions
+├── tests/
+│   └── test_tracker.py # Unit tests
+└── docs/
+    ├── BENCHMARK_REPORT.md
+    └── ALGORITHM.md    # Mathematical derivation
+```
 
-## 💰 Commercial Information
+## 📜 License
 
-### Licensing Options
+**Open Source (AGPL v3.0):**
+- Free for research and evaluation
+- Modifications must be open-sourced
+- Commercial use requires license
 
-| License | Features | Price |
-|---------|----------|-------|
-| **Open Source** (AGPL v3) | Algorithm, benchmark | Free |
-| **Enterprise** | RTL, support, custom features | Contact us |
-| **OEM** | White-label, volume production | Contact us |
+**Enterprise License:**
+- Full source code
+- No AGPL obligations
+- Priority support
+- Custom integration assistance
 
-### Hardware BOM (1000 units)
+Contact: mladen@nexellum.com
 
-| Component | Unit Cost |
-|-----------|-----------|
-| FPGA (XCZU48DR) | $3,395 |
-| DDR4 + Power | $442 |
-| RF Frontend | $123 |
-| PCB + Assembly | $150 |
-| **Total Hardware** | **$4,110** |
+## 🎯 Applications
 
-**Target sell price: $25,000/unit → 52% gross margin**
+- **Missile Seekers**: Sub-meter accuracy for terminal guidance
+- **Air Defense Radars**: Superior track quality for engagement
+- **Fire Control Systems**: Real-time tracking for weapon systems
+- **Counter-UAS**: Handles erratic drone maneuvers
+- **Space Surveillance**: Long-range tracking with sparse updates
 
-## 📄 Publications
+## 📚 References
 
-*Patent pending:* "Multi-Model Interacting Multiple Model Tracking with Per-Model RTS Smoothing and Adaptive Process Noise"
+1. Bar-Shalom, Y., Li, X.R., Kirubarajan, T. (2001). *Estimation with Applications to Tracking and Navigation*
+2. Blom, H.A.P., Bar-Shalom, Y. (1988). "The Interacting Multiple Model Algorithm for Systems with Markovian Switching Coefficients"
+3. Rauch, H.E., Tung, F., Striebel, C.T. (1965). "Maximum Likelihood Estimates of Linear Dynamic Systems"
 
-Key citations:
-- Bar-Shalom, Y., Li, X.R., "Estimation with Applications to Tracking and Navigation"
-- Blackman, S., Popoli, R., "Design and Analysis of Modern Tracking Systems"
-
-## 📞 Contact
+## 📧 Contact
 
 **Nexellum d.o.o.**
 - Email: mladen@nexellum.com
@@ -197,18 +213,4 @@ Key citations:
 
 ---
 
-## Reproducibility Statement
-
-This benchmark is designed to be **100% reproducible**. Running with the same seed will produce identical results:
-
-```bash
-python3 benchmarks/fair_benchmark.py --runs 50 --seed 42
-```
-
-All random number generation uses NumPy with fixed seeds. No external data dependencies.
-
----
-
-**© 2026 Nexellum d.o.o. All rights reserved.**
-
-Open source components licensed under AGPL v3. Enterprise features available under commercial license.
+*Built with ❤️ in Croatia for defense applications worldwide*
