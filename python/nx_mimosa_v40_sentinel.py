@@ -99,6 +99,7 @@ class PlatformIdentifier:
         self.spd = deque(maxlen=window)
         self.g_h = deque(maxlen=window)
         self.alt = deque(maxlen=window)
+        self.omega_h = deque(maxlen=window)  # Turn rate history
         self.pv = None
         self.best = "Unknown"
         self.conf = 0.0
@@ -107,7 +108,15 @@ class PlatformIdentifier:
         s = np.linalg.norm(vel)
         self.spd.append(s)
         if self.pv is not None and dt > 0:
-            self.g_h.append(np.linalg.norm(vel - self.pv) / dt / GRAVITY)
+            dv = vel - self.pv
+            g_est = np.linalg.norm(dv) / dt / GRAVITY
+            self.g_h.append(g_est)
+            # Turn rate estimate
+            sp = max(s, 1)
+            cross = vel[0]*self.pv[1] - vel[1]*self.pv[0]
+            psp = max(np.linalg.norm(self.pv), 1)
+            omega = abs(cross / (sp * psp * dt + 1e-10))
+            self.omega_h.append(omega)
         self.pv = vel.copy()
         self.alt.append(abs(pos[1]) if len(pos)>=2 else 0)
         if len(self.spd) < 5 or len(self.g_h) < 3:
@@ -117,11 +126,13 @@ class PlatformIdentifier:
     def _classify(self):
         as_ = np.mean(self.spd); ms = np.max(self.spd)
         ag = np.mean(self.g_h); mg = np.max(self.g_h)
+        g_var = np.std(self.g_h) if len(self.g_h) > 2 else 0  # Key discriminator
         aa = np.mean(self.alt)
+        ao = np.mean(self.omega_h) if self.omega_h else 0
         scores = {}
         for n, p in self.db.items():
             if n == "Unknown": continue
-            scores[n] = self._score(p, as_, ms, ag, mg, aa)
+            scores[n] = self._score(p, as_, ms, ag, mg, g_var, aa, ao)
         if not scores: return "Unknown", 0.0
         best = max(scores, key=scores.get)
         c = scores[best]
@@ -131,42 +142,61 @@ class PlatformIdentifier:
             self.best, self.conf = "Unknown", c
         return self.best, self.conf
 
-    def _score(self, p, as_, ms, ag, mg, aa):
+    def _score(self, p, as_, ms, ag, mg, g_var, aa, ao):
         cat = p.get("category","unknown")
         pms = p["max_speed_mps"]; pcs = p.get("cruise_speed_mps", pms*0.6)
         pmg = p["max_g"]; psg = p.get("sustained_g", pmg*0.5)
         pma = p.get("max_altitude_m", 50000)
+        pmo = p.get("max_turn_rate_radps", 1.0)
         sc = 0.0
-        # Speed (0-4)
+        
+        # Speed (0-3)
         if ms > pms*1.2: sc -= 2
         else:
             r = as_/max(pcs,1)
-            sc += 4*max(0, 1-abs(r-1)*0.4) if 0.3<=r<=2 else 0.5
-        # G-load (0-5) STRONGEST
+            sc += 3*max(0, 1-abs(r-1)*0.4) if 0.3<=r<=2 else 0.5
+        
+        # G-load match (0-5) — STRONGEST discriminator
         if mg > pmg*1.3: sc -= 3
         else:
             r = mg/max(psg,0.1)
             if 0.1<=r<=1.5: sc += 5*max(0, 1-abs(r-0.7)*0.5)
             elif r<0.1: sc += (0 if psg>3 else 3)
             else: sc += 1
+        
+        # G variability (0-3) — fighters/FPV have high variance, missiles/transport low
+        g_var_expected = 0.3 if cat in ("fighter","fpv_kamikaze") else 0.1 if cat in ("transport","bomber","aew","loitering_munition") else 0.2
+        g_var_match = max(0, 3 - 5*abs(g_var - g_var_expected))
+        sc += max(g_var_match, 0)
+        
+        # Turn rate match (0-2)
+        if ao <= pmo * 1.3:
+            omega_ratio = ao / max(pmo, 0.01)
+            sc += 2 * max(0, 1 - abs(omega_ratio - 0.5) * 0.8)
+        else:
+            sc -= 1
+        
         # Altitude (0-2)
         sc += 2 if aa<=pma*1.2 else (0.5 if aa<=pma*2 else 0)
-        # Category (0-3)
-        cat_s = 0.5
+        
+        # Category-specific (0-3)
+        cat_s = 0.3
         if cat=="fighter" and 80<as_<800 and mg>2: cat_s = 3
-        elif cat=="fighter" and mg>3: cat_s = 2.5  # High g alone → likely fighter
-        elif cat=="fighter" and 60<as_<800: cat_s = 1.5
+        elif cat=="fighter" and mg>3: cat_s = 2.5
         elif cat=="small_drone" and as_<50 and mg<3: cat_s = 3
-        elif cat=="fpv_kamikaze" and as_<60 and mg>0.5 and mg<5: cat_s = 3
-        elif cat=="loitering_munition" and 20<as_<80 and mg<4: cat_s = 3
-        elif cat=="cruise_missile" and 100<as_<400 and mg<6: cat_s = 3
+        elif cat=="fpv_kamikaze" and as_<60 and g_var>0.3: cat_s = 3  # High g variability = FPV
+        elif cat=="fpv_kamikaze" and as_<60 and mg>0.5: cat_s = 2.5
+        elif cat=="loitering_munition" and 20<as_<80 and g_var<0.2: cat_s = 3  # Low g var = loiter
+        elif cat=="cruise_missile" and 100<as_<400 and mg<3 and g_var<0.3: cat_s = 3
+        elif cat=="cruise_missile" and 100<as_<400 and mg<6: cat_s = 2
         elif cat=="ballistic_missile" and as_>800 and aa>5000: cat_s = 3
         elif cat=="hypersonic_missile" and as_>1500: cat_s = 3
         elif cat=="sam" and as_>500 and mg>3: cat_s = 3
-        elif cat in ("transport","bomber","aew") and as_<350 and mg<3: cat_s = 3
+        elif cat in ("transport","bomber","aew") and as_<350 and mg<2 and g_var<0.15: cat_s = 3
         elif cat=="mlrs" and as_>200 and aa>3000: cat_s = 3
         sc += cat_s
-        return max(sc,0)/14
+        
+        return max(sc,0)/18  # Normalized to total possible score
 
 # =============================================================================
 # Intent Predictor
@@ -299,6 +329,14 @@ class NxMimosaV40Sentinel:
         for m in self.active_models: self.mu[m] = max(liks[m]*cb[m]/tot, 1e-30)
         ms = sum(self.mu.values())
         for m in self.active_models: self.mu[m] /= ms
+        
+        # Adaptive p_stay: when one model dominates, increase stay probability
+        max_mu = max(self.mu.values())
+        if max_mu > 0.75:
+            self.p_stay = min(0.95, 0.88 + 0.1 * (max_mu - 0.75) / 0.25)
+        else:
+            self.p_stay = 0.88
+        self._rebuild_tpm()
 
         # 4. Combined estimate
         xc = np.zeros(4)
@@ -320,12 +358,32 @@ class NxMimosaV40Sentinel:
         plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt)
         pd = self.platform_db.get(plat, self.platform_db.get("Unknown",{}))
         if conf>=0.35 and plat!="Unknown": self._vs_adapt(pd)
+        
+        # 6b. Emergency reactivation: if CV-only but velocity change is large
+        if len(self.active_models) == 1 and self.active_models[0] == "CV":
+            if self.xc_h:
+                dv = np.linalg.norm(xc[2:4] - self.xc_h[-1][2:4])
+                if dv > 15 * self.dt:  # Significant acceleration detected
+                    self.active_models = ["CV", "CT_plus", "CT_minus"]
+                    self.mu = {"CV": 0.6, "CT_plus": 0.2, "CT_minus": 0.2}
+                    for m in ["CT_plus", "CT_minus"]:
+                        self.x[m] = self._ms(self.x["CV"], 4, MODEL_DIMS[m])
+                        self.P[m] = self._mc(self.P["CV"], 4, MODEL_DIMS[m])
+                    self._rebuild_tpm()
 
         # 7. Intent + Q scale
         sp = np.linalg.norm(xc[2:4]); ag = 0
         if self.xc_h: ag = np.linalg.norm(xc[2:4]-self.xc_h[-1][2:4])/(self.dt*GRAVITY+1e-10)
         phase,pc = self.intent_pred.predict(pd, sp, ag, self.mu)
         self.q_scale = pd.get("intent_phases",{}).get(phase,{}).get("q_scale",1.0)
+        
+        # Adaptive prune threshold: benign phases → kill off unnecessary models
+        if self.q_scale < 0.3:
+            self.prune_threshold = 0.15  # Aggressive: prune to CV-only
+        elif self.q_scale < 0.6:
+            self.prune_threshold = 0.08  # Moderate
+        else:
+            self.prune_threshold = 0.03  # Default: keep models for maneuvers
 
         # 8. Prune
         self._prune()
@@ -389,12 +447,34 @@ class NxMimosaV40Sentinel:
     def get_forward_estimates(self): return [x[:2].copy() for x in self.xc_h]
 
     def get_window_smoothed_estimates(self, window=None):
-        """Stream 2: Sliding window per-model RTS with divergence guard."""
-        W = window or self.window_size; N = len(self.xf_h)
+        """Stream 2: Adaptive sliding window per-model RTS with divergence guard.
+        
+        Key: window shrinks automatically during high-dynamics segments,
+        preventing oversmoothing during maneuvers while still gaining
+        accuracy during benign segments.
+        """
+        W_max = window or self.window_size; N = len(self.xf_h)
         if N < 2: return self.get_forward_estimates()
         fwd = self.get_forward_estimates(); result = [x.copy() for x in fwd]
 
-        for ek in range(W, N):
+        for ek in range(min(5, W_max), N):
+            # Adaptive window: measure dynamics in recent segment
+            W = W_max
+            if ek >= 5:
+                dvs = []
+                for j in range(max(0, ek-10), ek):
+                    if j+1 < N:
+                        dv = np.linalg.norm(self.xc_h[j+1][2:4] - self.xc_h[j][2:4])
+                        dvs.append(dv)
+                if dvs:
+                    avg_dv = np.mean(dvs)
+                    if avg_dv > 50:    W = min(W, 3)   # Extreme dynamics
+                    elif avg_dv > 20:  W = min(W, 8)   # High dynamics
+                    elif avg_dv > 10:  W = min(W, 15)  # Medium dynamics
+            
+            W = min(W, ek)
+            if W < 2: continue
+
             sk = ek - W + 1; wl = ek - sk + 1
             models = self.act_h[ek]; mu_e = self.mu_h[ek]
             xc = np.zeros(2)
@@ -411,17 +491,17 @@ class NxMimosaV40Sentinel:
                     Fk=self.F_h[k+1].get(m)
                     if any(v is None for v in [xf,Pf,xp1,Pp1,Fk]):
                         xs = self.xf_h[k].get(m, xs); continue
-                    G = np.clip(Pf@Fk.T@safe_inv(Pp1), -5, 5)
-                    xs = xf + G @ np.clip(xs - xp1, -2000, 2000)
+                    G = np.clip(Pf@Fk.T@safe_inv(Pp1), -3, 3)
+                    xs = xf + G @ np.clip(xs - xp1, -1000, 1000)
                 xc += mu_m * xs[:2]
-            # Divergence guard
+            # Divergence guard: tighter threshold  
             dev = np.linalg.norm(xc - fwd[sk])
-            scale = max(np.linalg.norm(fwd[sk]), 100)
-            result[sk] = xc if dev < scale * 0.5 else fwd[sk]
+            scale = max(np.linalg.norm(fwd[sk]), 50)
+            result[sk] = xc if dev < scale * 0.15 else fwd[sk]
         return result
 
     def get_smoothed_estimates(self):
-        """Stream 3: Full-track per-model RTS with divergence guard."""
+        """Stream 3: Full-track per-model RTS with tight divergence guard."""
         N = len(self.xf_h)
         if N < 2: return self.get_forward_estimates()
         fwd = self.get_forward_estimates()
@@ -441,17 +521,48 @@ class NxMimosaV40Sentinel:
                 Fk=self.F_h[k+1].get(m)
                 if any(v is None for v in [xf,Pf,xp1,Pp1,Fk]):
                     xs = self.xf_h[k].get(m, xs); smoothed[k]=xs.copy(); continue
-                G = np.clip(Pf@Fk.T@safe_inv(Pp1), -5, 5)
-                xs = xf + G @ np.clip(xs-xp1, -2000, 2000)
+                G = np.clip(Pf@Fk.T@safe_inv(Pp1), -3, 3)
+                xs = xf + G @ np.clip(xs-xp1, -1000, 1000)
                 smoothed[k] = xs.copy()
             for k in range(N):
                 if smoothed[k] is not None:
                     delta = mu_m*smoothed[k][:2] - mu_m*self.xc_h[k][:2]
                     candidate = result[k] + delta
                     dev = np.linalg.norm(candidate - fwd[k])
-                    scale = max(np.linalg.norm(fwd[k]), 100)
-                    if dev < scale * 0.5:
+                    scale = max(np.linalg.norm(fwd[k]), 50)
+                    if dev < scale * 0.15:
                         result[k] = candidate
+        return result
+
+    def get_adaptive_best_estimates(self):
+        """Stream 4: Adaptive best-of per timestep.
+        
+        Uses smoothed during benign segments, forward during maneuvers.
+        Selection based on local dynamics metric.
+        """
+        fwd = self.get_forward_estimates()
+        N = len(fwd)
+        if N < 10:
+            return fwd
+        
+        win = self.get_window_smoothed_estimates()
+        result = [None] * N
+        
+        for k in range(N):
+            # Measure local dynamics (velocity change rate)
+            dyn = 0
+            for j in range(max(0, k-3), min(N-1, k+3)):
+                if j+1 < N:
+                    dyn += np.linalg.norm(self.xc_h[j+1][2:4] - self.xc_h[j][2:4])
+            dyn /= min(6, k+3 - max(0,k-3))
+            
+            if k < len(win) and dyn < 10:
+                # Benign segment: prefer smoothed
+                result[k] = win[k]
+            else:
+                # Dynamic segment: use forward
+                result[k] = fwd[k]
+        
         return result
 
 def create_tracker(dt=0.1, r_std=2.5, platform_db_path=None, window_size=30):
