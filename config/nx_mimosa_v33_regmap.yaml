@@ -1,0 +1,229 @@
+# ==============================================================================
+# NX-MIMOSA v3.3 — Register Map (SSOT)
+# Single Source of Truth for RTL, C header, Python driver, Device Tree
+# ==============================================================================
+# Target: ZU48DR @ 250MHz
+# Author: Dr. Mladen Mešter / Nexellum d.o.o.
+# ==============================================================================
+
+module:
+  name: nx_mimosa_v33
+  version: "3.3.0"
+  base_addr: 0x40000000  # PL AXI-Lite base
+  addr_width: 8
+  data_width: 32
+  description: "NX-MIMOSA v3.3 Dual-Mode IMM Tracker"
+
+registers:
+  # === v3.1 Compatible Block (0x00-0x3C) ===
+  - name: CONTROL
+    offset: 0x00
+    access: RW
+    reset: 0x0000001B  # enable + smoother + window + offline
+    description: "Master control register"
+    fields:
+      - name: enable
+        bits: [0, 0]
+        description: "Global enable"
+      - name: smoother_enable
+        bits: [1, 1]
+        description: "Legacy smoother enable (Stream 3)"
+      - name: reset
+        bits: [2, 2]
+        description: "Soft reset (auto-clear)"
+      - name: window_enable
+        bits: [3, 3]
+        description: "Window RTS enable (Stream 2)"
+      - name: offline_enable
+        bits: [4, 4]
+        description: "Offline/full-track enable (Stream 3)"
+
+  - name: OMEGA
+    offset: 0x04
+    access: RW
+    reset: 0x00003298
+    format: Q15.16
+    description: "Turn rate omega [rad/s] (default 0.196 = 6g@300m/s)"
+
+  - name: DT
+    offset: 0x08
+    access: RW
+    reset: 0x0000199A
+    format: Q15.16
+    description: "Time step dt [s] (default 0.1)"
+
+  - name: Q_CV
+    offset: 0x0C
+    access: RW
+    reset: 0x00008000
+    format: Q15.16
+    description: "CV process noise q_cv (default 0.5)"
+
+  - name: Q_CT
+    offset: 0x10
+    access: RW
+    reset: 0x00010000
+    format: Q15.16
+    description: "CT process noise q_ct (default 1.0)"
+
+  - name: R_NOISE
+    offset: 0x14
+    access: RW
+    reset: 0x00028000
+    format: Q15.16
+    description: "Measurement noise std r [m] (default 2.5)"
+
+  - name: P_STAY
+    offset: 0x18
+    access: RW
+    reset: 0x0000E148
+    format: Q15.16
+    description: "Mode stay probability (default 0.88)"
+
+  - name: STATUS
+    offset: 0x1C
+    access: RO
+    description: "Status register"
+    fields:
+      - name: dominant_mode
+        bits: [2, 0]
+        description: "0=CV, 1=CT+, 2=CT-"
+      - name: track_initialized
+        bits: [31, 31]
+        description: "Track init flag"
+
+  - name: X_INIT_0
+    offset: 0x20
+    access: RW
+    reset: 0x00000000
+    format: Q15.16
+    description: "Initial state x"
+
+  - name: X_INIT_1
+    offset: 0x24
+    access: RW
+    reset: 0x00000000
+    format: Q15.16
+    description: "Initial state y"
+
+  - name: X_INIT_2
+    offset: 0x28
+    access: RW
+    reset: 0x00000000
+    format: Q15.16
+    description: "Initial state vx"
+
+  - name: X_INIT_3
+    offset: 0x2C
+    access: RW
+    reset: 0x00000000
+    format: Q15.16
+    description: "Initial state vy"
+
+  - name: P_INIT_0
+    offset: 0x30
+    access: RW
+    reset: 0x00640000
+    format: Q15.16
+    description: "P_init[0][0] diagonal (default 100.0)"
+
+  - name: P_INIT_1
+    offset: 0x34
+    access: RW
+    reset: 0x00640000
+    format: Q15.16
+    description: "P_init[1][1] diagonal"
+
+  - name: P_INIT_2
+    offset: 0x38
+    access: RW
+    reset: 0x00640000
+    format: Q15.16
+    description: "P_init[2][2] diagonal"
+
+  - name: P_INIT_3
+    offset: 0x3C
+    access: RW
+    reset: 0x00640000
+    format: Q15.16
+    description: "P_init[3][3] diagonal"
+
+  # === v3.3 New Registers (0x40-0x68) ===
+  - name: WINDOW_SIZE
+    offset: 0x40
+    access: RW
+    reset: 0x0000001E  # 30
+    description: "Window smoother depth (1..64, default 30)"
+    fields:
+      - name: size
+        bits: [5, 0]
+        description: "Window size N"
+
+  - name: TRIGGER_MODE
+    offset: 0x44
+    access: RW
+    reset: 0x00000000
+    description: "Smoother trigger mode"
+    fields:
+      - name: mode
+        bits: [1, 0]
+        description: "0=SLIDING, 1=MANEUVER, 2=COV_SPIKE, 3=MANUAL"
+
+  - name: INNOV_THRESHOLD
+    offset: 0x48
+    access: RW
+    reset: 0x00040000
+    format: Q15.16
+    description: "Innovation NIS threshold (default 4.0)"
+
+  - name: COV_THRESHOLD
+    offset: 0x4C
+    access: RW
+    reset: 0x00640000
+    format: Q15.16
+    description: "Covariance trace spike threshold (default 100.0)"
+
+  - name: MANUAL_TRIGGER
+    offset: 0x50
+    access: RW
+    reset: 0x00000000
+    description: "Write 1 to trigger window smooth (auto-clear)"
+    fields:
+      - name: trigger
+        bits: [0, 0]
+        description: "Software trigger pulse"
+
+  - name: WINDOW_COUNT
+    offset: 0x54
+    access: RO
+    description: "Number of window-smoothed outputs produced"
+
+  - name: MANEUVER_STATE
+    offset: 0x58
+    access: RO
+    description: "Current maneuver detector state"
+    fields:
+      - name: state
+        bits: [2, 0]
+        description: "0=IDLE, 1=ONSET, 2=SUSTAINED, 3=ENDING, 4=ENDED"
+
+  - name: FWD_CYCLES
+    offset: 0x5C
+    access: RO
+    description: "Forward filter cycle count"
+
+  - name: SMOOTH_CYCLES
+    offset: 0x60
+    access: RO
+    description: "Window smoother backward pass cycle count"
+
+  - name: TRACK_FILL
+    offset: 0x64
+    access: RO
+    description: "Track buffer fill level"
+
+  - name: VERSION
+    offset: 0x68
+    access: RO
+    reset: 0x00030003
+    description: "Version register (major.minor = 3.3)"
