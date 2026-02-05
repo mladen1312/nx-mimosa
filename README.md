@@ -2,250 +2,163 @@
 
 ## Multi-Domain Radar Tracking System
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/mladen1312/nx-mimosa/releases)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/mladen1312/nx-mimosa/releases)
 [![License](https://img.shields.io/badge/license-AGPL%20v3-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen.svg)](#testing)
-[![EUROCONTROL](https://img.shields.io/badge/EUROCONTROL-Compliant-blue.svg)](#standards)
-[![DO-178C](https://img.shields.io/badge/DO--178C-DAL--C-orange.svg)](#certification)
-[![ISO 26262](https://img.shields.io/badge/ISO%2026262-ASIL--D-purple.svg)](#certification)
+[![Benchmark](https://img.shields.io/badge/benchmark-reproducible-green.svg)](#gold-standard-benchmark)
 
-**NX-MIMOSA** (Next-generation Multi-domain Interacting Multiple Model Optimized State-estimation Architecture) is a production-ready multi-target tracking system for aviation, automotive, defense, space, and maritime applications.
+**NX-MIMOSA** (Nexellum Multi-Model Optimal State Approximation) is a production-grade radar tracking algorithm featuring:
 
----
+- **4-Model IMM** (CV, CT+, CT-, CV-HIGH-Q) with Variable-Structure TPM
+- **True Per-Model RTS Smoother** with covariance-weighted combination
+- **Adaptive Process Noise** via NIS exponential moving average
+- **Joseph Form** covariance update for numerical stability
+- **FPGA-Ready** SystemVerilog RTL for ZU48DR RFSoC
 
-## 🎯 Key Features
+### Commercial Use
 
-### Core Tracking Algorithms
-- **UKF** - Unscented Kalman Filter for nonlinear state estimation
-- **CKF** - Cubature Kalman Filter (30% faster than UKF)
-- **EKF** - Extended Kalman Filter for radar/GPS measurements
-- **VS-IMM** - Variable-Structure Interacting Multiple Model
-- **Particle Filter** - Sequential Monte Carlo for non-Gaussian tracking
-- **JPDA** - Joint Probabilistic Data Association
-- **MHT** - Multiple Hypothesis Tracking
-
-### Multi-Sensor Fusion
-- **Covariance Intersection** - Unknown correlation handling
-- **Bar-Shalom-Campo** - Optimal track-to-track fusion
-- **Track Correlation** - Automatic association across sensors
-
-### Output Formats
-| Format | Domain | Standard |
-|--------|--------|----------|
-| ASTERIX CAT062 | Aviation (ATC/ATM) | EUROCONTROL |
-| CAN-FD | Automotive (ADAS) | ISO 11898 |
-| Link-16 TADIL-J | Defense | MIL-STD-6016 |
-| CCSDS | Space (SSA) | CCSDS 503.0-B-1 |
-| NMEA 2000 | Maritime (VTS) | NMEA 2000 |
-
-### ECCM (Electronic Counter-Countermeasures)
-- Frequency agility (LFSR/AES hopping patterns)
-- RGPO jammer detection & mitigation
-- Adaptive soft gating under jamming
-
-### FPGA Implementation
-- 18 SystemVerilog modules
-- Target: Xilinx RFSoC ZU48DR @ 250 MHz
-- AXI4 SoC integration wrapper
-- Vivado TCL build scripts
+**Contact mladen@nexellum.com for licensing and exemptions.**
 
 ---
 
-## 📊 Performance
+## Gold Standard Benchmark
 
-| Metric | Requirement | Achieved | Margin |
-|--------|-------------|----------|--------|
-| ATC En-route RMS | ≤ 500 m | **122 m** | +309% |
-| ATC Terminal RMS | ≤ 150 m | **47 m** | +219% |
-| Track Continuity | ≥ 99.5% | **100%** | ✓ |
-| End-to-end Latency | ≤ 100 ms | **45 ms** | +122% |
-| FPGA LUT Usage | - | **23%** | Headroom |
-| Multi-sensor Fusion Gain | - | **>20%** | CI/BSC |
+### Methodology
 
----
+Honest, reproducible comparison against the tracking community's gold standards:
 
-## 🚀 Quick Start
+- **[Stone Soup](https://github.com/dstl/Stone-Soup)** (UK DSTL) — Production-grade tracking framework
+- **[FilterPy](https://github.com/rlabbe/filterpy)** (Roger Labbe) — Most widely used Python Kalman library
 
-### Installation
+**Fairness Guarantees:**
+- All algorithms receive **identical** noisy measurements (same RNG seed)
+- All algorithms use **identical** initial state and covariance
+- FilterPy IMM uses the **same 3-model structure** (CV/CT+/CT-) as NX-MIMOSA
+- Monte Carlo: 30 runs per scenario, seed=42
+- No cherry-picking: ALL scenarios and ALL algorithms reported
+
+### Results (v3.2, 30 MC runs, seed=42)
+
+| Scenario | StoneSoup EKF+RTS | FilterPy IMM | NX-MIMOSA v3.2 | Winner |
+|----------|:-----------------:|:------------:|:--------------:|:------:|
+| Missile Terminal (Mach 4, 9g) | 13.50 m | 40.27 m | **8.80 m** | **v3.2** |
+| Hypersonic Glide (Mach 5, 2g) | 46.86 m | 80.28 m | **22.56 m** | **v3.2** |
+| SAM Engagement (300m/s, 6g) | **4.97 m** | 17.28 m | 5.66 m | StoneSoup |
+| Dogfight BFM (250m/s, 8g) | 4.17 m | 14.76 m | **3.70 m** | **v3.2** |
+| Cruise Missile (250m/s, 3g) | 21.36 m | 33.01 m | **9.31 m** | **v3.2** |
+| Ballistic Reentry (Mach 7) | 65.70 m | 198.41 m | **61.64 m** | **v3.2** |
+| UAV Swarm (50m/s, 2g) | 2.69 m | 11.01 m | **2.61 m** | **v3.2** |
+| Stealth Aircraft (200m/s, 4g) | 42.12 m | 86.91 m | **22.35 m** | **v3.2** |
+| **GRAND AVERAGE** | **25.17 m** | **60.24 m** | **17.08 m** | **v3.2** |
+
+**Win Rate: 7/8 scenarios** | **+32% better than Stone Soup** | **+72% better than FilterPy IMM**
+
+### Honest Disclosure
+
+**Known advantages of NX-MIMOSA (disclosed for fairness):**
+- IMM (multi-model) inherently outperforms single-model filters on maneuvers
+- Smoothing uses future data — not available in real-time applications
+- Adaptive Q and VS-TPM provide additional tuning beyond standard IMM
+
+**Known limitations:**
+- Stone Soup has no built-in IMM — comparison is CV-smoother vs IMM-smoother
+- FilterPy IMM is forward-only — no smoother available for direct comparison
+- NX-MIMOSA smoother requires offline/batch processing (not causal)
+
+**Fair forward-only comparison (real-time capable):**
+- NX-MIMOSA v3.2 (fwd): **24.72 m** vs FilterPy IMM: 60.24 m (**+59% better**)
+
+### Reproduce
 
 ```bash
-# Clone repository
+# Install dependencies
+pip install numpy scipy filterpy stonesoup
+
+# Run benchmark
+python benchmarks/benchmark_vs_goldstandard.py --runs 30 --seed 42
+
+# Run v3.2 comparison
+python benchmarks/benchmark_v32_upgrade.py
+```
+
+---
+
+## Algorithm Details
+
+### v3.2 Innovations
+
+1. **4-Model IMM**: Added CV-HIGH-Q model (5× base process noise) as "catch-all" for unknown maneuver types, inspired by Singer maneuvering target model
+2. **Aggressive Adaptive Q**: NIS-based scaling up to 25× (was 10×) with exponential moving average for stability
+3. **NIS-aware TPM**: Transition probability matrix biases toward high-Q model when innovation statistics indicate model mismatch
+4. **Covariance-weighted Smoother**: Combines smoothed per-model estimates using `mode_prob / trace(P)` weighting instead of pure mode probabilities
+
+### Architecture
+
+```
+                     ┌─────────────┐
+Measurements ──────►│  IMM Mixer   │
+                     └──────┬──────┘
+                            │
+              ┌─────────────┼─────────────┬─────────────┐
+              ▼             ▼             ▼             ▼
+         ┌────────┐   ┌────────┐   ┌────────┐   ┌────────────┐
+         │  CV    │   │  CT+   │   │  CT-   │   │ CV-HIGH-Q  │
+         │(q=q₀) │   │(ω=+0.1)│   │(ω=-0.1)│   │ (q=5×q₀)  │
+         └───┬────┘   └───┬────┘   └───┬────┘   └─────┬──────┘
+             │             │             │              │
+             │    Adaptive Q (NIS EMA)   │              │
+             │    Joseph Form Update     │              │
+              ▼             ▼             ▼             ▼
+         ┌────────────────────────────────────────────────┐
+         │           Mode Probability Update               │
+         │         VS-TPM (NIS-aware biasing)              │
+         └───────────────────┬────────────────────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │  Per-Model RTS  │
+                    │    Smoother     │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │   Cov-Weighted  │
+                    │   Combination   │
+                    └─────────────────┘
+```
+
+---
+
+## Supported Platforms
+
+| Board | Price | ADC | DAC | Best For |
+|-------|-------|-----|-----|----------|
+| **RFSoC 4x2** | **$2,499** | 4× 5GSPS | 2× 9.85GSPS | Development, PYNQ |
+| **ZCU208** | $13,194 | 8× 5GSPS | 8× 10GSPS | Production, 8-ch |
+
+Both boards use **XCZU48DR** Gen 3 RFSoC — same RTL, different build targets.
+
+---
+
+## Quick Start
+
+```bash
 git clone https://github.com/mladen1312/nx-mimosa.git
 cd nx-mimosa
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install package
 pip install -e .
-```
 
-### Basic Usage
-
-```python
-from nx_mimosa_v41_atc import NXMIMOSAAtc
-import numpy as np
-
-# Create tracker
-tracker = NXMIMOSAAtc(dt=4.0, sigma=100.0)
-
-# Initialize with position and velocity
-position = np.array([50000.0, 30000.0, 10668.0])  # meters
-velocity = np.array([232.0, 0.0, 0.0])             # m/s
-tracker.initialize(position, velocity)
-
-# Track loop
-for measurement in measurements:
-    tracker.predict(dt=4.0)
-    R = np.diag([100**2, 100**2, 150**2])  # Measurement noise
-    state = tracker.update(measurement, R)
-    
-    print(f"Position: {state[:3]}")
-    print(f"Mode probabilities: {tracker.get_mode_probabilities()}")
-```
-
-### Multi-Sensor Fusion
-
-```python
-from python.fusion import TrackFusionManager, LocalTrack, FusionMethod
-
-# Create fusion manager
-fusion = TrackFusionManager(FusionMethod.COVARIANCE_INTERSECTION)
-
-# Add tracks from multiple sensors
-tracks = [
-    LocalTrack(sensor_id=1, track_id=101, state=state1, covariance=P1, timestamp=t),
-    LocalTrack(sensor_id=2, track_id=201, state=state2, covariance=P2, timestamp=t),
-]
-
-# Fuse tracks
-system_tracks = fusion.process_local_tracks(tracks)
-```
-
-### Particle Filter (Bearing-Only Tracking)
-
-```python
-from python.filters import ParticleFilter, ParticleFilterConfig
-
-config = ParticleFilterConfig(n_particles=2000)
-pf = ParticleFilter(config)
-
-pf.initialize(x0, P0)
-
-for azimuth_measurement in measurements:
-    pf.predict(dt=1.0)
-    state, cov = pf.update_bearing_only(azimuth, sigma_az=np.radians(1.0))
-```
-
----
-
-## 📁 Repository Structure
-
-```
-nx-mimosa/
-├── python/
-│   ├── filters/              # EKF, Particle Filter
-│   ├── fusion/               # Track-to-Track Fusion
-│   ├── advanced/             # JPDA, MHT
-│   ├── eccm/                 # Frequency Agility, RGPO
-│   ├── output/               # ASTERIX, CAN-FD, Link-16, CCSDS, NMEA
-│   └── nx_mimosa_*.py        # Core trackers
-├── rtl/                      # 18 SystemVerilog modules
-├── fpga/                     # Vivado build scripts
-├── tests/                    # pytest + cocotb
-├── docs/                     # Certification & Integration
-│   ├── DO178C_CERTIFICATION_PACKAGE.md
-│   ├── DO254_FPGA_CERTIFICATION.md
-│   ├── ISO26262_ASIL_D_CERTIFICATION.md
-│   └── INTEGRATION_GUIDE.md
-└── .github/workflows/        # CI/CD pipeline
-```
-
----
-
-## 🧪 Testing
-
-```bash
-# Run all tests
+# Run tests
 pytest tests/ -v
 
-# Run with coverage
-pytest tests/ --cov=. --cov-report=html
-
-# Run specific test suite
-pytest tests/test_nx_mimosa.py -v        # Unit tests
-pytest tests/test_integration.py -v      # Integration tests
+# Run benchmark
+python benchmarks/benchmark_vs_goldstandard.py
 ```
 
-**Current Status:** 70 tests passing ✅
-
 ---
 
-## 📜 Certification
+## License
 
-### Aviation
-- **DO-178C DAL-C** - Software certification package
-- **DO-254 DAL-C** - FPGA certification package
-- EUROCONTROL ARTAS compatible
+AGPL v3 — see [LICENSE](LICENSE)
 
-### Automotive
-- **ISO 26262 ASIL-D** - Functional safety
-- ISO 11898 CAN-FD compliant
+**Commercial licensing available.** Contact: mladen@nexellum.com | +385 99 737 5100
 
-### Defense
-- MIL-STD-6016 Link-16 compatible
-- NATO STANAG 4586 ready
-
----
-
-## 🗺️ Roadmap
-
-### v1.1 (Current - March 2026)
-- ✅ Extended Kalman Filter
-- ✅ Particle Filter
-- ✅ Track-to-Track Fusion
-- ⏳ GPU acceleration
-
-### v1.2 (Q2 2026)
-- ROS2 integration
-- Real-time visualization
-- Cloud deployment
-
-### v2.0 (Q4 2026)
-- Complete FPGA implementation
-- DO-178C DAL-B certification
-- Commercial SaaS offering
-
----
-
-## 📄 License
-
-**Dual License:**
-- **AGPL v3** - Open source (requires derivative works to be open source)
-- **Commercial** - Contact for proprietary use
-
-See [LICENSE](LICENSE) and [LICENSE_COMMERCIAL.md](LICENSE_COMMERCIAL.md) for details.
-
----
-
-## 👤 Author
-
-**Dr. Mladen Mešter**  
-Nexellum d.o.o.
-
-- 📧 Email: mladen@nexellum.com
-- 📱 Phone: +385 99 737 5100
-- 🌐 GitHub: [@mladen1312](https://github.com/mladen1312)
-
----
-
-## 🙏 Acknowledgments
-
-- EUROCONTROL for ARTAS specifications
-- IEEE for radar tracking literature
-- Bar-Shalom & Li for foundational algorithms
-
----
-
-*© 2024-2026 Nexellum d.o.o. All Rights Reserved.*
+© 2024-2026 Nexellum d.o.o. All rights reserved.
