@@ -1,0 +1,244 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# NX-MIMOSA SYSTEM CONFIGURATION (SSOT - Single Source of Truth)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# This file defines ALL configurable parameters for the NX-MIMOSA system.
+# Auto-generators create: .sv, .svh, .h, .py, Device Tree overlays
+#
+# Traceability:
+#   [REQ-SSOT-001] Central configuration management
+#   [REQ-SSOT-002] Code generation automation
+#
+# Author: Dr. Mladen Mešter / Nexellum d.o.o.
+# Version: 1.1.0
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# SYSTEM IDENTIFICATION
+# =============================================================================
+system:
+  name: "NX-MIMOSA"
+  version: "1.1.0"
+  author: "Nexellum d.o.o."
+  license: "AGPL-3.0 / Commercial"
+
+# =============================================================================
+# RADAR PARAMETERS
+# =============================================================================
+radar:
+  fs: 100000000              # Sampling frequency (Hz) - 100 MHz
+  fc: 10000000000            # Carrier frequency (Hz) - 10 GHz (X-band)
+  bandwidth: 10000000        # Bandwidth (Hz) - 10 MHz
+  prf: 1000                  # Pulse Repetition Frequency (Hz)
+  n_pulses: 64               # Pulses per CPI
+  max_range: 150000          # Maximum range (m) - 150 km
+  range_resolution: 15       # Range resolution (m)
+
+# =============================================================================
+# FPGA / AXI PARAMETERS
+# =============================================================================
+fpga:
+  target_device: "xczu48dr-ffvg1517-2-e"  # RFSoC ZU48DR
+  clock_freq: 250000000      # Main clock (Hz) - 250 MHz
+  axi_data_width: 32         # AXI4-Stream data width
+  axi_addr_width: 32         # AXI4-Lite address width
+  fifo_depth: 1024           # FIFO depth for buffering
+
+# =============================================================================
+# TRACKING FILTER PARAMETERS
+# =============================================================================
+tracking:
+  # UKF Parameters
+  ukf:
+    alpha: 0.001             # Spread of sigma points
+    beta: 2.0                # Prior knowledge (Gaussian = 2)
+    kappa: 0.0               # Secondary scaling
+    dim_x: 6                 # State dimension [x, y, z, vx, vy, vz]
+    dim_z: 3                 # Measurement dimension [x, y, z]
+  
+  # IMM Parameters  
+  imm:
+    n_modes: 3               # Number of motion models
+    mode_names: ["CV", "CT_LEFT", "CT_RIGHT"]
+    initial_mode_probs: [0.8, 0.1, 0.1]
+    # Transition Probability Matrix
+    tpm:
+      - [0.95, 0.025, 0.025]
+      - [0.05, 0.90, 0.05]
+      - [0.05, 0.05, 0.90]
+    # Process noise per mode (m²/s⁴)
+    q_values: [1.0, 50.0, 50.0]
+  
+  # Gating
+  gating:
+    chi2_threshold: 16.81    # Chi-squared threshold (6-DOF, 99.9%)
+    max_distance: 10000      # Maximum association distance (m)
+
+# =============================================================================
+# CFAR DETECTOR PARAMETERS
+# =============================================================================
+cfar:
+  window_size: 20            # Reference window size (cells)
+  guard_cells: 4             # Guard cells around CUT
+  threshold_factor: 5.0      # Threshold multiplier for CA-CFAR
+  pfa_target: 0.000001       # Target Pfa (1e-6)
+
+# =============================================================================
+# COGNITIVE CFAR (ML-BASED)
+# =============================================================================
+cognitive:
+  enabled: true
+  svm:
+    num_support_vectors: 64  # Max SVs (reduced via clustering)
+    kernel: "rbf"            # Kernel type
+    gamma: 0.5               # RBF gamma parameter
+    prob_threshold: 0.95     # Detection probability threshold
+  features:
+    - magnitude
+    - local_mean
+    - local_variance
+  fixed_point:
+    total_bits: 16           # Q8.8 format
+    frac_bits: 8
+
+# =============================================================================
+# ECCM PARAMETERS
+# =============================================================================
+eccm:
+  enabled: true
+  frequency_agility:
+    enabled: true
+    center_freq: 10000000000  # 10 GHz
+    bandwidth: 500000000      # 500 MHz hopping range
+    n_channels: 64            # Number of hop channels
+    hop_interval_us: 100      # Hop interval (microseconds)
+    pattern: "lfsr"           # Hopping pattern: lfsr, aes, random
+    lfsr_polynomial: 0x6B     # LFSR feedback polynomial
+  
+  jammer_detection:
+    enabled: true
+    power_ratio_threshold: 5.0  # Flag if CUT > 5x local mean
+    rgpo_detection: true
+    vgpo_detection: false     # TODO: v1.2
+
+# =============================================================================
+# OUTPUT FORMATTERS
+# =============================================================================
+output:
+  asterix:
+    enabled: true
+    sac: 0                   # System Area Code
+    sic: 1                   # System Identification Code
+    category: 62             # CAT062 for track data
+    udp_port: 8600
+  
+  canfd:
+    enabled: true
+    base_id: 0x300           # CAN base message ID
+    update_rate_hz: 20       # Output rate
+    use_fd: true             # Use CAN-FD (64 byte)
+  
+  link16:
+    enabled: false           # Enable for defense applications
+    own_track_number: 1
+    message_type: "J2.2"
+  
+  ccsds:
+    enabled: false           # Enable for space applications
+    apid: 100
+    packet_version: 1
+
+# =============================================================================
+# REGISTER MAP (AXI-Lite)
+# =============================================================================
+registers:
+  base_address: 0x80000000
+  
+  # Control registers
+  REG_CONTROL:
+    offset: 0x00
+    fields:
+      enable: { bits: "0", reset: 0 }
+      reset: { bits: "1", reset: 0 }
+      mode: { bits: "3:2", reset: 0 }
+  
+  REG_STATUS:
+    offset: 0x04
+    fields:
+      ready: { bits: "0", access: "RO" }
+      overflow: { bits: "1", access: "RO" }
+      track_count: { bits: "15:8", access: "RO" }
+  
+  REG_CFAR_CONFIG:
+    offset: 0x08
+    fields:
+      threshold: { bits: "15:0", reset: 0x0500 }
+      window_size: { bits: "23:16", reset: 20 }
+      guard_cells: { bits: "27:24", reset: 4 }
+  
+  REG_TRACK_COUNT:
+    offset: 0x0C
+    fields:
+      count: { bits: "15:0", access: "RO" }
+  
+  REG_DETECTION_COUNT:
+    offset: 0x10
+    fields:
+      count: { bits: "31:0", access: "RO" }
+  
+  REG_VERSION:
+    offset: 0xFC
+    fields:
+      minor: { bits: "7:0", reset: 1 }
+      major: { bits: "15:8", reset: 1 }
+      revision: { bits: "23:16", reset: 0 }
+
+# =============================================================================
+# SIMULATION PARAMETERS
+# =============================================================================
+simulation:
+  # Multi-target scenario [REQ-SIM-001]
+  targets:
+    - { range: 500, rcs: 1.0, velocity: 50, snr_db: 15 }
+    - { range: 1200, rcs: 0.5, velocity: -30, snr_db: 12 }
+    - { range: 1500, rcs: 2.0, velocity: 0, snr_db: 18 }
+    - { range: 3000, rcs: 1.2, velocity: 100, snr_db: 14 }
+    - { range: 4500, rcs: 0.8, velocity: -20, snr_db: 13 }
+  
+  clutter:
+    sigma: 0.2
+    distribution: "rayleigh"
+  
+  jammer:
+    enabled: true
+    type: "rgpo"
+    target_range: 500
+    pull_off: 500
+    jnr_db: 20
+
+# =============================================================================
+# CERTIFICATION
+# =============================================================================
+certification:
+  do178c:
+    dal: "C"                 # Design Assurance Level
+    mc_dc_coverage: 100      # Modified Condition/Decision Coverage %
+  
+  iso26262:
+    asil: "D"                # Automotive Safety Integrity Level
+    spfm_target: 99          # Single Point Fault Metric %
+    lfm_target: 90           # Latent Fault Metric %
+
+# =============================================================================
+# BUILD CONFIGURATION
+# =============================================================================
+build:
+  vivado_version: "2024.1"
+  yocto_version: "scarthgap"
+  python_version: "3.10"
+  
+  outputs:
+    - systemverilog          # params.sv, regs.sv
+    - c_header               # config.h, regs.h
+    - python                 # config.py
+    - device_tree            # nx_mimosa.dtsi
