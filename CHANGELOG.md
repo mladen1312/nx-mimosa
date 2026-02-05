@@ -8,10 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- MHT-IMM hybrid algorithm
-- Extended CCSDS TDM support
-- Neural network classification
-- Kubernetes deployment
+- GPU acceleration (CUDA/OpenCL)
+- ROS2 integration
+- Real-time visualization dashboard
 
 ---
 
@@ -20,34 +19,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🆕 New Features
 
 #### Extended Kalman Filter (EKF)
-- **Nonlinear measurement models**: Radar RAE, Radar 2D, Bearing-only, GPS geodetic
-- **Coordinate transforms**: WGS-84 geodetic ↔ ECEF ↔ ENU
-- **EKF-IMM integration**: Combined nonlinear measurements with maneuver detection
+- Nonlinear measurement models (Radar R-Az-El, GPS geodetic, bearing-only)
+- WGS-84 coordinate transforms (geodetic ↔ ECEF ↔ ENU)
+- Analytical Jacobian computation
+- EKF-IMM integration for maneuver detection
+
+#### Particle Filter (Sequential Monte Carlo)
+- Standard SIR Particle Filter
+- Regularized Particle Filter (RPF) with kernel smoothing
+- Auxiliary Particle Filter (APF) with lookahead
+- 4 resampling methods: Systematic, Stratified, Residual, Multinomial
+- Bearing-only tracking support
 
 #### Track-to-Track Fusion
-- **Covariance Intersection (CI)**: Fusion with unknown correlations
-- **Bar-Shalom-Campo**: Optimal fusion with known correlations
-- **Track Correlation**: Mahalanobis distance gating and clustering
-- **Fusion Manager**: System track lifecycle and sensor mapping
+- Covariance Intersection (CI) for unknown correlations
+- Bar-Shalom-Campo fusion for known correlations
+- Track correlation and association
+- System track management
+- Multi-sensor quality weighting
 
-#### ROS2 Interface
-- **Native ROS2 Node**: Subscribe to PointCloud2, publish MarkerArray
-- **Standalone Interface**: Works without ROS2 for testing
-- **Compatibility**: ROS2 Humble/Iron/Jazzy, Autoware.Universe, PX4
+### Improved
+- Integration test suite (22 new tests)
+- Documentation structure
+- Package organization (filters/, fusion/ submodules)
 
-#### GPU Acceleration
-- **CuPy Backend**: CUDA acceleration for matrix operations
-- **Batched UKF**: Process 1000+ tracks in parallel
-- **Auto Fallback**: Automatic CPU fallback when GPU unavailable
-- **~10x Speedup**: Achieved with GPU for large track counts
-
-### Changed
-- Updated integration tests for new modules
-- Improved test coverage
-
-### Performance
-- Batch tracking: 100,000+ updates/sec (CPU), 1M+ updates/sec (GPU)
-- Multi-sensor fusion latency: <5ms for 10 sensors
+### Fixed
+- API consistency across modules
+- Test coverage for output formatters
 
 ---
 
@@ -96,7 +94,7 @@ First production-ready release of NX-MIMOSA multi-domain radar tracking system.
 - **ISO 26262 ASIL-D** - Automotive functional safety
 
 #### Infrastructure
-- pytest test suite with 80%+ coverage
+- pytest test suite (48 unit tests)
 - GitHub Actions CI/CD pipeline
 - Docker container support
 - Sphinx documentation
@@ -120,38 +118,6 @@ First production-ready release of NX-MIMOSA multi-domain radar tracking system.
 - ISO 11898 (CAN-FD) ✓
 - CCSDS 503.0-B-1 ✓
 - NMEA 2000 ✓
-
----
-
-## [0.9.0] - 2026-01-15 (Beta)
-
-### Added
-- VS-IMM implementation
-- ASTERIX encoder
-- Basic CAN-FD support
-- Initial DO-178C documentation
-
-### Changed
-- Improved UKF numerical stability
-- Optimized matrix operations
-
-### Fixed
-- Covariance symmetry enforcement
-- Track ID wraparound issue
-
----
-
-## [0.5.0] - 2025-12-01 (Alpha)
-
-### Added
-- UKF core implementation
-- Basic tracking loop
-- Unit test framework
-
-### Known Issues
-- No certification documentation
-- Single sensor only
-- No FPGA support
 
 ---
 
