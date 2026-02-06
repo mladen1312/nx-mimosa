@@ -13,7 +13,7 @@ Quick Start::
 Nexellum d.o.o. — Dr. Mladen Mešter — mladen@nexellum.com
 """
 
-__version__ = "5.5.0"
+__version__ = "5.6.0"
 __author__ = "Dr. Mladen Mešter"
 __email__ = "mladen@nexellum.com"
 __license__ = "AGPL-3.0-or-later"
@@ -88,6 +88,35 @@ from python.nx_mimosa_fusion import (
     make_esm_sensor,
 )
 
+# Extended Coordinate Chains
+from python.nx_mimosa_coords import (
+    spherical_to_geodetic,
+    geodetic_to_spherical,
+    ecef_to_spherical,
+    spherical_to_ecef,
+    covariance_spherical_to_cartesian,
+    covariance_cartesian_to_spherical,
+    bearing_between,
+    destination_point,
+)
+
+# Enhanced MHT
+from python.nx_mimosa_mtt import (
+    mht_associate_enhanced,
+    MHTHypothesisTree,
+)
+
+# Dataset Adapters
+from python.nx_mimosa_datasets import (
+    ScanData,
+    DatasetInfo,
+    NuScenesAdapter,
+    CARLAAdapter,
+    RADIATEAdapter,
+    GenericCSVAdapter,
+    SyntheticScenarioGenerator,
+)
+
 # Coordinate transforms
 from python.nx_mimosa_coords import (
     geodetic_to_ecef,
@@ -127,6 +156,16 @@ __all__ = [
     "MultiSensorFusionEngine", "SensorType", "SensorConfig", "SensorMeasurement",
     "SensorHealth", "make_radar_sensor", "make_doppler_radar_sensor",
     "make_eo_sensor", "make_adsb_sensor", "make_esm_sensor",
+    # Coordinate chains
+    "spherical_to_geodetic", "geodetic_to_spherical",
+    "ecef_to_spherical", "spherical_to_ecef",
+    "covariance_spherical_to_cartesian", "covariance_cartesian_to_spherical",
+    "bearing_between", "destination_point",
+    # Enhanced MHT
+    "mht_associate_enhanced", "MHTHypothesisTree",
+    # Datasets
+    "ScanData", "DatasetInfo", "NuScenesAdapter", "CARLAAdapter",
+    "RADIATEAdapter", "GenericCSVAdapter", "SyntheticScenarioGenerator",
     # Coords
     "geodetic_to_ecef", "ecef_to_geodetic", "ecef_to_enu", "enu_to_ecef",
     "geodetic_to_enu", "enu_to_geodetic",
