@@ -1171,3 +1171,140 @@ class TestDopplerIntegration:
         
         vr = compute_radial_velocity(state, sensor)
         assert vr == 0.0  # Degenerate case
+
+
+# ============================================================
+# TRACK-TO-TRACK ASSOCIATION TESTS
+# ============================================================
+
+from nx_mimosa_mtt import t2ta_associate, fuse_tracks, T2TAPair, assess_track_quality
+
+class TestT2TA:
+    """Track-to-track association for multi-sensor fusion."""
+    
+    def test_perfect_match(self):
+        """Identical tracks should match with high confidence."""
+        tracks_a = [{'id': 1, 'x': np.array([1000, 2000, 3000, 100, 0, 0], dtype=float),
+                     'P': np.eye(6) * 100}]
+        tracks_b = [{'id': 10, 'x': np.array([1005, 2002, 2998, 98, 1, -1], dtype=float),
+                     'P': np.eye(6) * 100}]
+        
+        matched, ua, ub = t2ta_associate(tracks_a, tracks_b)
+        assert len(matched) == 1
+        assert matched[0].track_a_id == 1
+        assert matched[0].track_b_id == 10
+        assert matched[0].confidence > 0.5
+        assert len(ua) == 0
+        assert len(ub) == 0
+    
+    def test_no_match_far(self):
+        """Distant tracks should not match."""
+        tracks_a = [{'id': 1, 'x': np.array([0, 0, 0, 0, 0, 0], dtype=float),
+                     'P': np.eye(6) * 10}]
+        tracks_b = [{'id': 10, 'x': np.array([50000, 50000, 50000, 0, 0, 0], dtype=float),
+                     'P': np.eye(6) * 10}]
+        
+        matched, ua, ub = t2ta_associate(tracks_a, tracks_b)
+        assert len(matched) == 0
+        assert ua == [1]
+        assert ub == [10]
+    
+    def test_multi_track_assignment(self):
+        """Multiple tracks should get correct 1:1 assignment."""
+        tracks_a = [
+            {'id': 1, 'x': np.array([1000, 0, 0, 100, 0, 0], dtype=float), 'P': np.eye(6) * 100},
+            {'id': 2, 'x': np.array([0, 5000, 0, 0, 200, 0], dtype=float), 'P': np.eye(6) * 100},
+        ]
+        tracks_b = [
+            {'id': 10, 'x': np.array([5, 5005, 2, 1, 198, 0], dtype=float), 'P': np.eye(6) * 100},
+            {'id': 11, 'x': np.array([1002, 3, -1, 99, 1, 0], dtype=float), 'P': np.eye(6) * 100},
+        ]
+        
+        matched, ua, ub = t2ta_associate(tracks_a, tracks_b)
+        assert len(matched) == 2
+        
+        pairs = {(m.track_a_id, m.track_b_id) for m in matched}
+        assert (1, 11) in pairs  # Track 1 → Track 11 (both near x=1000)
+        assert (2, 10) in pairs  # Track 2 → Track 10 (both near y=5000)
+    
+    def test_empty_inputs(self):
+        """Empty track lists should return gracefully."""
+        matched, ua, ub = t2ta_associate([], [])
+        assert matched == []
+        
+        matched, ua, ub = t2ta_associate(
+            [{'id': 1, 'x': np.zeros(6), 'P': np.eye(6)}], [])
+        assert len(matched) == 0
+        assert ua == [1]
+    
+    def test_euclidean_method(self):
+        """Euclidean distance mode should work."""
+        tracks_a = [{'id': 1, 'x': np.array([100, 200, 300, 0, 0, 0], dtype=float),
+                     'P': np.eye(6)}]
+        tracks_b = [{'id': 10, 'x': np.array([101, 201, 301, 0, 0, 0], dtype=float),
+                     'P': np.eye(6)}]
+        
+        matched, _, _ = t2ta_associate(tracks_a, tracks_b,
+                                       gate_threshold=100.0, method="euclidean")
+        assert len(matched) == 1
+
+
+class TestFuseTracks:
+    """Track fusion via information-form combination."""
+    
+    def test_equal_uncertainty(self):
+        """Fusing two equally uncertain tracks should average positions."""
+        ta = {'x': np.array([100, 0, 0, 50, 0, 0], dtype=float), 'P': np.eye(6) * 100}
+        tb = {'x': np.array([200, 0, 0, 50, 0, 0], dtype=float), 'P': np.eye(6) * 100}
+        
+        x_f, P_f = fuse_tracks(ta, tb)
+        assert abs(x_f[0] - 150.0) < 1.0  # Midpoint
+        assert P_f[0, 0] < 100.0  # Lower uncertainty
+    
+    def test_one_much_better(self):
+        """Fused result should favor the more certain track."""
+        ta = {'x': np.array([100, 0, 0, 0, 0, 0], dtype=float), 'P': np.eye(6) * 10}   # Precise
+        tb = {'x': np.array([200, 0, 0, 0, 0, 0], dtype=float), 'P': np.eye(6) * 10000} # Uncertain
+        
+        x_f, P_f = fuse_tracks(ta, tb)
+        assert abs(x_f[0] - 100.0) < 10.0  # Strongly favors track A
+    
+    def test_covariance_reduction(self):
+        """Fusion should always reduce uncertainty."""
+        ta = {'x': np.zeros(6), 'P': np.eye(6) * 500}
+        tb = {'x': np.zeros(6), 'P': np.eye(6) * 800}
+        
+        _, P_f = fuse_tracks(ta, tb)
+        assert P_f[0, 0] < 500.0
+        assert P_f[0, 0] < 800.0
+
+
+class TestTrackQuality:
+    """Track quality assessment grading."""
+    
+    def test_high_quality_track(self):
+        """Track with many hits and low uncertainty should grade A/B."""
+        track = TrackState(track_id=1, filter=KalmanFilter3D(6, 3))
+        track.filter.P = np.eye(6) * 10  # Low uncertainty
+        track.hit_count = 50
+        track.miss_count = 2
+        
+        report = assess_track_quality(track)
+        assert report.quality_grade in ('A', 'B')
+        assert report.is_reliable
+        assert report.hit_ratio > 0.9
+    
+    def test_low_quality_track(self):
+        """Track with many misses and high uncertainty should grade D/F."""
+        track = TrackState(track_id=2, filter=KalmanFilter3D(6, 3))
+        track.filter.P = np.eye(6) * 1e8  # Enormous uncertainty
+        track.hit_count = 1
+        track.miss_count = 50
+        
+        report = assess_track_quality(track)
+        assert report.quality_grade in ('C', 'D', 'F')
+        assert report.hit_ratio < 0.1
+        
+        report = assess_track_quality(track)
+        assert report.quality_grade in ('D', 'F')
+        assert not report.is_reliable
