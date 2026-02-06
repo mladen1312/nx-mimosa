@@ -13,7 +13,7 @@ Quick Start::
 Nexellum d.o.o. — Dr. Mladen Mešter — mladen@nexellum.com
 """
 
-__version__ = "5.2.0"
+__version__ = "5.3.0"
 __author__ = "Dr. Mladen Mešter"
 __email__ = "mladen@nexellum.com"
 __license__ = "AGPL-3.0-or-later"
@@ -50,6 +50,13 @@ from python.nx_mimosa_mtt import (
     make_cv3d_doppler_matrices,
     doppler_measurement_matrix,
     compute_radial_velocity,
+    # Track-to-Track Association
+    t2ta_associate,
+    fuse_tracks,
+    T2TAPair,
+    # Track Quality
+    assess_track_quality,
+    TrackQualityReport,
 )
 
 # Coordinate transforms
@@ -81,6 +88,8 @@ __all__ = [
     "compute_nees", "compute_nis", "compute_ospa", "compute_siap_metrics",
     "SensorBiasEstimator", "SensorBias", "OOSMHandler",
     "make_cv3d_doppler_matrices", "doppler_measurement_matrix", "compute_radial_velocity",
+    "t2ta_associate", "fuse_tracks", "T2TAPair",
+    "assess_track_quality", "TrackQualityReport",
     # Coords
     "geodetic_to_ecef", "ecef_to_geodetic", "ecef_to_enu", "enu_to_ecef",
     "geodetic_to_enu", "enu_to_geodetic",
