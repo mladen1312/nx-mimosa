@@ -94,109 +94,400 @@ def safe_inv(M):
 # Platform Identifier
 # =============================================================================
 class PlatformIdentifier:
-    def __init__(self, db, window=15):
+    """Hierarchical platform classifier using IMM model probabilities + speed.
+    
+    v4.0.1 fix: Previous classifier used filtered velocity derivatives which
+    are smoothed to near-zero by IMM mixing. New approach uses:
+    1. Speed (from tracker state — well estimated)
+    2. IMM model probabilities (BEST dynamics indicator — tells us which
+       motion model fits, directly revealing maneuver type)
+    3. Parallel CV filter NIS (high = maneuvering)
+    4. Tracker omega estimate (turn rate from CT models)
+    
+    Classification is hierarchical:
+    Step 1: Coarse category from speed range + dynamics level
+    Step 2: Fine ID from speed/dynamics profile within category
+    """
+    def __init__(self, db, window=30):
         self.db = {k:v for k,v in db.items() if k != "_meta"}
+        # Speed & altitude (from tracker state, accurate)
         self.spd = deque(maxlen=window)
-        self.g_h = deque(maxlen=window)
         self.alt = deque(maxlen=window)
-        self.omega_h = deque(maxlen=window)  # Turn rate history
+        # IMM model probability histories (primary dynamics features)
+        self.mu_cv_h = deque(maxlen=window)
+        self.mu_ct_h = deque(maxlen=window)    # CT+ + CT- combined
+        self.mu_ca_h = deque(maxlen=window)
+        self.mu_jerk_h = deque(maxlen=window)
+        self.mu_ball_h = deque(maxlen=window)
+        # Parallel CV filter NIS (dynamics indicator: high = maneuvering)
+        self.cv_nis_h = deque(maxlen=window)
+        # Tracker omega (from CT model, good turn rate estimate)
+        self.omega_h = deque(maxlen=window)
+        # Legacy (kept for backward compat, low weight)
+        self.g_h = deque(maxlen=window)
         self.pv = None
         self.best = "Unknown"
         self.conf = 0.0
+        # === LIFETIME PEAK tracking (never expires) ===
+        self.omega_peak = 0.0
+        self.cv_nis_peak = 0.0
+        self.mu_ct_peak = 0.0
+        self.mu_ca_peak = 0.0
+        self.mu_jerk_peak = 0.0
+        self.cv_nis_sum = 0.0  # Running sum for mean
+        self.n_steps = 0
+        self.spd_max_ever = 0.0
+        # Speed trend tracking (v4.0.2: for ballistic/hypersonic discrimination)
+        self.spd_early = deque(maxlen=20)   # First 20 speed samples
+        self.spd_late = deque(maxlen=20)    # Latest 20 speed samples
+        self.spd_samples_total = 0
+        self.alt_max_ever = 0.0  # Lifetime peak altitude
 
-    def update(self, pos, vel, dt):
+    def update(self, pos, vel, dt, mu=None, cv_nis=None, omega=0.0):
+        """Update features and classify.
+        
+        Args:
+            pos: tracker estimated position [x,y]
+            vel: tracker estimated velocity [vx,vy]
+            dt: time step
+            mu: dict of IMM model probabilities (NEW - primary dynamics feature)
+            cv_nis: parallel CV filter NIS (NEW - dynamics indicator)
+            omega: tracker turn rate estimate from CT model
+        """
         s = np.linalg.norm(vel)
         self.spd.append(s)
+        self.spd_max_ever = max(self.spd_max_ever, s)
+        self.alt.append(abs(pos[1]) if len(pos) >= 2 else 0)
+        self.alt_max_ever = max(self.alt_max_ever, abs(pos[1]) if len(pos) >= 2 else 0)
+        self.omega_h.append(abs(omega))
+        self.omega_peak = max(self.omega_peak, abs(omega))
+        self.n_steps += 1
+        # Speed trend: track early vs late for accel/decel detection
+        self.spd_samples_total += 1
+        if self.spd_samples_total <= 20:
+            self.spd_early.append(s)
+        self.spd_late.append(s)  # Rolling last 20
+        
+        # Legacy g from filtered velocity (kept but deprioritized)
         if self.pv is not None and dt > 0:
             dv = vel - self.pv
-            g_est = np.linalg.norm(dv) / dt / GRAVITY
-            self.g_h.append(g_est)
-            # Turn rate estimate
-            sp = max(s, 1)
-            cross = vel[0]*self.pv[1] - vel[1]*self.pv[0]
-            psp = max(np.linalg.norm(self.pv), 1)
-            omega = abs(cross / (sp * psp * dt + 1e-10))
-            self.omega_h.append(omega)
+            self.g_h.append(np.linalg.norm(dv) / dt / GRAVITY)
         self.pv = vel.copy()
-        self.alt.append(abs(pos[1]) if len(pos)>=2 else 0)
-        if len(self.spd) < 5 or len(self.g_h) < 3:
+        
+        # IMM model probabilities — THE KEY FEATURE
+        if mu:
+            self.mu_cv_h.append(mu.get("CV", 0))
+            ct = mu.get("CT_plus", 0) + mu.get("CT_minus", 0)
+            self.mu_ct_h.append(ct)
+            self.mu_ct_peak = max(self.mu_ct_peak, ct)
+            ca = mu.get("CA", 0)
+            self.mu_ca_h.append(ca)
+            self.mu_ca_peak = max(self.mu_ca_peak, ca)
+            jk = mu.get("Jerk", 0)
+            self.mu_jerk_h.append(jk)
+            self.mu_jerk_peak = max(self.mu_jerk_peak, jk)
+            self.mu_ball_h.append(mu.get("Ballistic", 0))
+        
+        # Parallel CV filter NIS (instantaneous, not EMA!)
+        if cv_nis is not None:
+            self.cv_nis_h.append(cv_nis)
+            self.cv_nis_peak = max(self.cv_nis_peak, cv_nis)
+            self.cv_nis_sum += cv_nis
+        
+        if len(self.spd) < 5:
             return "Unknown", 0.0
         return self._classify()
 
     def _classify(self):
-        as_ = np.mean(self.spd); ms = np.max(self.spd)
-        ag = np.mean(self.g_h); mg = np.max(self.g_h)
-        g_var = np.std(self.g_h) if len(self.g_h) > 2 else 0  # Key discriminator
-        aa = np.mean(self.alt)
-        ao = np.mean(self.omega_h) if self.omega_h else 0
-        scores = {}
-        for n, p in self.db.items():
-            if n == "Unknown": continue
-            scores[n] = self._score(p, as_, ms, ag, mg, g_var, aa, ao)
-        if not scores: return "Unknown", 0.0
+        # === Feature extraction ===
+        spd_avg = np.mean(self.spd)
+        spd_max = self.spd_max_ever  # Lifetime max, not windowed
+        alt_avg = np.mean(self.alt)
+        
+        # IMM dynamics profile — use BOTH windowed averages AND lifetime peaks
+        mu_cv = np.mean(self.mu_cv_h) if self.mu_cv_h else 0.5
+        mu_ct = np.mean(self.mu_ct_h) if self.mu_ct_h else 0.1
+        mu_ca = np.mean(self.mu_ca_h) if self.mu_ca_h else 0.1
+        mu_jerk = np.mean(self.mu_jerk_h) if self.mu_jerk_h else 0.0
+        mu_ball = np.mean(self.mu_ball_h) if self.mu_ball_h else 0.0
+        
+        # LIFETIME PEAKS (critical: captures transient dynamics even if current benign)
+        mu_ct_peak = self.mu_ct_peak
+        mu_ca_peak = self.mu_ca_peak
+        mu_jerk_peak = self.mu_jerk_peak
+        
+        # CV NIS — use lifetime statistics
+        cv_nis_avg = self.cv_nis_sum / max(self.n_steps, 1)
+        cv_nis_peak = self.cv_nis_peak
+        
+        # Turn rate — lifetime peak is critical (captures maneuver even if now benign)
+        omega_avg = np.mean(self.omega_h) if self.omega_h else 0
+        omega_peak = self.omega_peak
+        
+        # Dynamics flags using PEAKS (not windowed values)
+        is_maneuvering = (mu_ct_peak > 0.5 or omega_peak > 0.1 or 
+                          cv_nis_peak > 50 or mu_ca_peak > 0.3)
+        is_high_dynamics = (mu_ct_peak > 0.8 or omega_peak > 0.3 or 
+                           cv_nis_peak > 500 or mu_jerk_peak > 0.3)
+        
+        # Speed trend: positive = accelerating, negative = decelerating
+        if len(self.spd_early) >= 5 and self.spd_samples_total >= 30:
+            spd_trend = np.mean(self.spd_late) - np.mean(self.spd_early)
+        else:
+            spd_trend = 0.0
+        
+        # Altitude range (max - min over lifetime)
+        alt_max = self.alt_max_ever  # Lifetime peak, not windowed
+        alt_min = min(self.alt) if self.alt else 0
+
+        # === Step 1: Coarse category classification ===
+        coarse = self._coarse_category(spd_avg, spd_max, alt_avg,
+                                        is_maneuvering, is_high_dynamics,
+                                        mu_ct, mu_ca, mu_ball, omega_peak)
+        
+        # === Step 2: Fine ID within category ===
+        feats = dict(spd_avg=spd_avg, spd_max=spd_max, alt_avg=alt_avg,
+                     mu_cv=mu_cv, mu_ct=mu_ct, mu_ca=mu_ca, 
+                     mu_jerk=mu_jerk, mu_ball=mu_ball,
+                     mu_ct_max=mu_ct_peak, mu_ca_max=mu_ca_peak,
+                     mu_jerk_max=mu_jerk_peak,
+                     cv_nis_avg=cv_nis_avg, cv_nis_max=cv_nis_peak,
+                     omega_avg=omega_avg, omega_max=omega_peak,
+                     is_maneuvering=is_maneuvering,
+                     is_high_dynamics=is_high_dynamics,
+                     spd_trend=spd_trend, alt_max=alt_max, alt_min=alt_min)
+        
+        candidates = [n for n, p in self.db.items() 
+                      if p.get("category","") in coarse and n != "Unknown"]
+        if not candidates:
+            candidates = [n for n in self.db if n != "Unknown"]
+        
+        scores = {n: self._score_fine(self.db[n], feats) for n in candidates}
+        if not scores:
+            return "Unknown", 0.0
+        
         best = max(scores, key=scores.get)
         c = scores[best]
-        if c >= 0.35:
+        if c >= 0.30:
             self.best, self.conf = best, c
         else:
             self.best, self.conf = "Unknown", c
         return self.best, self.conf
 
-    def _score(self, p, as_, ms, ag, mg, g_var, aa, ao):
-        cat = p.get("category","unknown")
-        pms = p["max_speed_mps"]; pcs = p.get("cruise_speed_mps", pms*0.6)
-        pmg = p["max_g"]; psg = p.get("sustained_g", pmg*0.5)
+    def _coarse_category(self, spd_avg, spd_max, alt_avg,
+                          is_maneuvering, is_high_dynamics,
+                          mu_ct, mu_ca, mu_ball, omega_max):
+        """Return set of possible coarse categories."""
+        cats = set()
+        
+        # === Speed-based primary classification ===
+        if spd_max > 1500:
+            # Hypersonic: only missiles
+            cats.update(["hypersonic_missile", "ballistic_missile", "sam"])
+        elif spd_max > 800:
+            # Supersonic: missiles or fast fighters
+            cats.update(["ballistic_missile", "sam", "mlrs", 
+                         "hypersonic_missile"])
+            if is_maneuvering and omega_max > 0.03:
+                cats.add("fighter")  # Supersonic fighter
+        elif spd_max > 150:
+            # Subsonic fast: fighters, cruise missiles, transport, bomber
+            if is_high_dynamics or mu_ct > 0.2 or omega_max > 0.05:
+                cats.update(["fighter", "cruise_missile"])
+            if not is_maneuvering or mu_ct < 0.1:
+                cats.update(["bomber", "transport", "aew", "cruise_missile"])
+            if not cats:
+                cats.update(["fighter", "bomber", "transport", "aew", 
+                             "cruise_missile"])
+        elif spd_max > 60:
+            # Medium speed: large drones, slow transports
+            cats.update(["loitering_munition", "transport", "aew"])
+            if is_maneuvering:
+                cats.add("cruise_missile")
+        else:
+            # Low speed: drones
+            cats.update(["small_drone", "fpv_kamikaze", "loitering_munition"])
+        
+        return cats
+
+    def _score_fine(self, p, f):
+        """Score a specific platform against extracted features.
+        
+        v4.0.2 fixes:
+        - Speed utilization ratio (spd_max/pms) for Kinzhal vs Iskander
+        - Tighter fighter omega gate (>0.4) to avoid Kalibr confusion
+        - Jerk model peak for Su-35 post-stall discrimination
+        - Altitude range for hypersonic vs ballistic
+        """
+        cat = p.get("category", "unknown")
+        pms = p["max_speed_mps"]
+        pcs = p.get("cruise_speed_mps", pms * 0.6)
+        pmg = p["max_g"]
+        psg = p.get("sustained_g", pmg * 0.5)
         pma = p.get("max_altitude_m", 50000)
-        pmo = p.get("max_turn_rate_radps", 1.0)
+        
         sc = 0.0
         
-        # Speed (0-3)
-        if ms > pms*1.2: sc -= 2
+        # --- Speed match (0-4) — well estimated by tracker ---
+        spd_ratio = f["spd_avg"] / max(pcs, 1)
+        if f["spd_max"] > pms * 1.3:
+            sc -= 3  # Too fast for this platform
+        elif 0.4 <= spd_ratio <= 1.8:
+            sc += 4 * max(0, 1 - abs(spd_ratio - 1) * 0.5)
         else:
-            r = as_/max(pcs,1)
-            sc += 3*max(0, 1-abs(r-1)*0.4) if 0.3<=r<=2 else 0.5
+            sc += 0.5  # Marginal speed match
         
-        # G-load match (0-5) — STRONGEST discriminator
-        if mg > pmg*1.3: sc -= 3
+        # --- Speed utilization ratio (0-3) — NEW v4.0.2 ---
+        # How much of this platform's max speed is being used?
+        # Near-max = terminal/dogfight, well-below = cruise/glide from higher capability
+        spd_util = f["spd_max"] / max(pms, 1)
+        if cat in ("ballistic_missile", "hypersonic_missile", "sam", "mlrs"):
+            # For missiles: expected utilization varies by type
+            # Ballistic in terminal: high utilization (0.7-1.0)
+            # Hypersonic in glide: moderate utilization (0.3-0.7)
+            if cat == "hypersonic_missile":
+                # Kinzhal: glide phase uses 40-70% of max speed
+                if 0.3 < spd_util < 0.70:
+                    sc += 3.0  # Sweet spot for glide phase
+                elif 0.70 <= spd_util < 0.85:
+                    sc += 1.5  # Transitional
+                elif spd_util >= 0.85:
+                    sc += 0.0  # Near max = not gliding, wrong platform
+                else:
+                    sc += 1.0
+            elif cat == "ballistic_missile":
+                # Iskander terminal: uses 80-100%+ of max speed
+                if spd_util > 0.90:
+                    sc += 4.0  # Confirmed terminal at max power
+                elif spd_util > 0.70:
+                    sc += 2.5  # High utilization
+                elif spd_util > 0.50:
+                    sc += 1.0  # Mid-course
+                else:
+                    sc += 0.0  # Too slow for this platform
+            elif cat == "sam":
+                # SAM: high utilization during intercept
+                if spd_util > 0.5:
+                    sc += 2.5
+                else:
+                    sc += 0.5
+            else:
+                sc += 1.5  # MLRS: moderate
+        elif cat == "fighter":
+            # Fighters commonly operate at 30-80% of max speed
+            if 0.25 < spd_util < 0.85:
+                sc += 2.0
+            else:
+                sc += 0.5
         else:
-            r = mg/max(psg,0.1)
-            if 0.1<=r<=1.5: sc += 5*max(0, 1-abs(r-0.7)*0.5)
-            elif r<0.1: sc += (0 if psg>3 else 3)
-            else: sc += 1
+            sc += 1.5  # Default moderate
         
-        # G variability (0-3) — fighters/FPV have high variance, missiles/transport low
-        g_var_expected = 0.3 if cat in ("fighter","fpv_kamikaze") else 0.1 if cat in ("transport","bomber","aew","loitering_munition") else 0.2
-        g_var_match = max(0, 3 - 5*abs(g_var - g_var_expected))
-        sc += max(g_var_match, 0)
+        # --- Dynamics match via lifetime peaks (0-6) — PRIMARY ---
+        dyn_sc = 0.0
+        omega_pk = f["omega_max"]  # Lifetime peak
+        nis_pk = f["cv_nis_max"]   # Lifetime peak
         
-        # Turn rate match (0-2)
-        if ao <= pmo * 1.3:
-            omega_ratio = ao / max(pmo, 0.01)
-            sc += 2 * max(0, 1 - abs(omega_ratio - 0.5) * 0.8)
+        if cat == "fighter":
+            # v4.0.2: Tighten omega gate — need >0.4 for full fighter score
+            # Cruise missiles have omega ~0.3, fighters have >0.5 sustained
+            dyn_sc += 3.0 if omega_pk > 0.5 else (1.5 if omega_pk > 0.4 else 0.5)
+            dyn_sc += 2.0 if nis_pk > 500 else (1.0 if nis_pk > 100 else 0)
+            dyn_sc += 1.0 if f["is_high_dynamics"] else 0
+            
+        elif cat == "cruise_missile":
+            # Cruise missiles: MODERATE omega (0.05-0.35) + moderate NIS
+            # v4.0.2: Reward omega being moderate, penalize if too fighter-like
+            if 0.05 < omega_pk < 0.35:
+                dyn_sc += 3.0  # Sweet spot
+            elif 0.35 <= omega_pk < 0.5:
+                dyn_sc += 2.0  # Borderline with fighter
+            elif omega_pk >= 0.5:
+                dyn_sc += 0.0  # Too aggressive = fighter, not cruise
+            else:
+                dyn_sc += 1.0  # Too benign
+            dyn_sc += 2.0 if 20 < nis_pk < 300 else (0.5 if nis_pk > 300 else 1.0)
+            dyn_sc += 1.0 if not f["is_high_dynamics"] else 0
+            
+        elif cat in ("ballistic_missile", "hypersonic_missile", "mlrs"):
+            # Ballistic/hypersonic: LOW omega (mostly straight) + HIGH NIS (acceleration)
+            dyn_sc += 3.0 if omega_pk < 0.3 else (1.0 if omega_pk < 0.5 else 0)
+            dyn_sc += 2.0 if nis_pk > 100 else (1.0 if nis_pk > 20 else 0)
+            dyn_sc += 1.0 if f["cv_nis_avg"] > 10 else 0
+            
+        elif cat == "sam":
+            # SAMs: MODERATE-HIGH omega (proportional nav turns) + VERY HIGH NIS
+            dyn_sc += 2.0 if omega_pk > 0.15 else 0
+            dyn_sc += 2.0 if nis_pk > 1000 else (1.0 if nis_pk > 100 else 0)
+            dyn_sc += 2.0 if f["is_high_dynamics"] else 0
+            
+        elif cat in ("bomber", "transport", "aew"):
+            # Low dynamics: very low omega + very low NIS
+            dyn_sc += 3.0 if omega_pk < 0.1 else (1.0 if omega_pk < 0.2 else 0)
+            dyn_sc += 2.0 if nis_pk < 20 else (0.5 if nis_pk < 100 else 0)
+            dyn_sc += 1.0 if not f["is_maneuvering"] else 0
+            
+        elif cat == "loitering_munition":
+            dyn_sc += 2.0 if omega_pk < 0.6 else 0
+            dyn_sc += 2.0 if nis_pk < 50 else (1.0 if nis_pk < 200 else 0)
+            dyn_sc += 2.0 if f["spd_avg"] < 80 else 0
+            
+        elif cat == "fpv_kamikaze":
+            dyn_sc += 2.0 if omega_pk > 0.3 else 1.0
+            dyn_sc += 2.0 if 10 < nis_pk < 200 else (1.0 if nis_pk > 200 else 0.5)
+            dyn_sc += 2.0 if f["spd_avg"] < 60 else 0
+            
+        elif cat == "small_drone":
+            dyn_sc += 3.0 if f["spd_avg"] < 25 else 0
+            dyn_sc += 2.0 if nis_pk < 20 else 0
+            dyn_sc += 1.0 if omega_pk < 0.3 else 0
         else:
-            sc -= 1
+            dyn_sc = 2.0
         
-        # Altitude (0-2)
-        sc += 2 if aa<=pma*1.2 else (0.5 if aa<=pma*2 else 0)
+        sc += min(dyn_sc, 6)  # Cap at 6
         
-        # Category-specific (0-3)
-        cat_s = 0.3
-        if cat=="fighter" and 80<as_<800 and mg>2: cat_s = 3
-        elif cat=="fighter" and mg>3: cat_s = 2.5
-        elif cat=="small_drone" and as_<50 and mg<3: cat_s = 3
-        elif cat=="fpv_kamikaze" and as_<60 and g_var>0.3: cat_s = 3  # High g variability = FPV
-        elif cat=="fpv_kamikaze" and as_<60 and mg>0.5: cat_s = 2.5
-        elif cat=="loitering_munition" and 20<as_<80 and g_var<0.2: cat_s = 3  # Low g var = loiter
-        elif cat=="cruise_missile" and 100<as_<400 and mg<3 and g_var<0.3: cat_s = 3
-        elif cat=="cruise_missile" and 100<as_<400 and mg<6: cat_s = 2
-        elif cat=="ballistic_missile" and as_>800 and aa>5000: cat_s = 3
-        elif cat=="hypersonic_missile" and as_>1500: cat_s = 3
-        elif cat=="sam" and as_>500 and mg>3: cat_s = 3
-        elif cat in ("transport","bomber","aew") and as_<350 and mg<2 and g_var<0.15: cat_s = 3
-        elif cat=="mlrs" and as_>200 and aa>3000: cat_s = 3
-        sc += cat_s
+        # --- Altitude match (0-2) ---
+        if f["alt_avg"] <= pma * 1.2:
+            sc += 2
+        elif f["alt_avg"] <= pma * 2:
+            sc += 0.5
         
-        return max(sc,0)/18  # Normalized to total possible score
+        # --- Altitude precision for high-alt platforms (0-2) — NEW v4.0.2 ---
+        if cat in ("ballistic_missile", "hypersonic_missile"):
+            # Use lifetime alt_max_ever for discrimination
+            alt_max = f.get("alt_max", f["alt_avg"])
+            if pma > 10000:
+                alt_util = alt_max / pma
+                # Platforms match when observed alt_max is reasonable fraction of capability
+                # Kinzhal (pma=80000) at alt_max=50000 → 0.625 → good
+                # Iskander (pma=50000) at alt_max=40000 → 0.80 → good  
+                # Kinzhal (pma=80000) at alt_max=40000 → 0.50 → marginal
+                sc += 2.0 * max(0, 1 - abs(alt_util - 0.65) * 2.0)
+        
+        # --- Speed precision within category (0-3) ---
+        if cat == "fighter":
+            # v4.0.2: Also use jerk peak for Su-35 post-stall discrimination
+            r = f["spd_avg"] / max(pcs, 1)
+            sc += 2.0 * max(0, 1 - abs(r - 1) * 0.6)
+            # Jerk model peak — Su-35 post-stall has extreme jerk
+            has_jerk_pref = "Jerk" in p.get("preferred_models", [])
+            if has_jerk_pref and f["mu_jerk_max"] > 0.3:
+                sc += 1.0  # Bonus for jerk-capable platform matching jerk observation
+            elif not has_jerk_pref and f["mu_jerk_max"] > 0.3:
+                sc -= 0.5  # Penalty: jerk observed but platform doesn't use it
+        elif cat in ("ballistic_missile", "hypersonic_missile"):
+            r = f["spd_max"] / max(pms, 1)
+            sc += 1.5 * max(0, 1 - abs(r - 0.8) * 0.5)
+            exp_alt = pma * 0.5
+            alt_r = f["alt_avg"] / max(exp_alt, 1000)
+            sc += 1.5 * max(0, 1 - abs(alt_r - 1) * 0.3)
+        elif cat == "sam":
+            r = f["spd_avg"] / max(pcs, 1)
+            sc += 3 * max(0, 1 - abs(r - 1) * 0.5)
+        else:
+            r = f["spd_avg"] / max(pcs, 1)
+            sc += 3 * max(0, 1 - abs(r - 1) * 0.5)
+        
+        return max(sc, 0) / 21  # Normalize: max = 4+4+6+2+2+3 = 21
 
 # =============================================================================
 # Intent Predictor
@@ -481,7 +772,17 @@ class NxMimosaV40Sentinel:
                 self.omega = 0.3*cr/(sp*psp*self.dt+1e-10)+0.7*self.omega
 
         # 6. Platform ID + VS-IMM adapt (only after initial transient)
-        plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt)
+        # Compute instantaneous CV NIS for classifier (before filter update)
+        _xp_cv = self._cv_F @ self._cv_x
+        _Pp_cv = self._cv_F @ self._cv_P @ self._cv_F.T + self._cv_Q
+        _nu_cv = z - self._cv_H @ _xp_cv
+        _S_cv = self._cv_H @ _Pp_cv @ self._cv_H.T + self.R
+        _Si_cv = safe_inv(_S_cv)
+        cv_nis_inst = float(_nu_cv @ _Si_cv @ _nu_cv)
+        
+        plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt,
+                                            mu=self.mu, cv_nis=cv_nis_inst,
+                                            omega=self.omega)
         pd = self.platform_db.get(plat, self.platform_db.get("Unknown",{}))
         if conf>=0.35 and plat!="Unknown" and self.step > 20: self._vs_adapt(pd)
         
