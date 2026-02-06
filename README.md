@@ -15,7 +15,7 @@
 
 [![Accuracy: 8.6× better](https://img.shields.io/badge/Accuracy-8.6×%20better%20than%20Stone%20Soup-brightgreen)]()
 [![18/19 Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
-[![170 Tests](https://img.shields.io/badge/Tests-170%2F170%20PASS-brightgreen)]()
+[![223 Tests](https://img.shields.io/badge/Tests-223%2F223%20PASS-brightgreen)]()
 [![NumPy Only](https://img.shields.io/badge/Dependency-NumPy%20Only-blue)]()
 [![AGPL v3 / Commercial](https://img.shields.io/badge/License-AGPL%20v3%20%2F%20Commercial-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
