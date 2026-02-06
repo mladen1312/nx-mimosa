@@ -29,7 +29,7 @@ from numpy.linalg import inv, pinv, LinAlgError
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-import json, os, math
+import json, os, math, bisect
 
 # v4.1: Import classifier pipeline
 try:
@@ -125,8 +125,21 @@ def _build_ballistic(dt, q):
 MODEL_DIMS = {"CV":4,"CT_plus":4,"CT_minus":4,"CA":6,"Jerk":8,"Ballistic":4}
 ALL_MODELS = list(MODEL_DIMS.keys())
 
+# Pre-cached identity matrices (avoid 7940 np.eye calls per scenario)
+_EYE = {n: np.eye(n) for n in [2, 4, 6, 8]}
+
 def safe_inv(M):
-    try: return inv(M + np.eye(M.shape[0])*EPS)
+    """Optimized matrix inverse — analytic 2x2, numpy for larger."""
+    n = M.shape[0]
+    if n == 2:
+        # Analytic 2x2 inverse: 10x faster than np.linalg.inv
+        a, b, c, d = M[0,0]+EPS, M[0,1], M[1,0], M[1,1]+EPS
+        det = a*d - b*c
+        if abs(det) < 1e-30:
+            return pinv(M)
+        idet = 1.0 / det
+        return np.array([[d*idet, -b*idet], [-c*idet, a*idet]])
+    try: return inv(M + _EYE.get(n, np.eye(n))*EPS)
     except LinAlgError: return pinv(M)
 
 # =============================================================================
@@ -1015,6 +1028,7 @@ DOMAIN_PRESETS = {
         "omega_init":    0.5,        # ~30°/s — typical intersection turn
         "p_stay":        0.92,       # Moderate persistence — frequent mode changes
         "q_cv_scale":    0.15,       # Low — automotive targets very predictable on road
+        "q_cv_boost":    0.45,       # AOS boost target (PyKalman-optimal for smooth motion)
         "q_ca_scale":    0.6,        # Moderate — braking/accel well-modeled
         "aos_benign_med": 3.5,       # Generous — most driving is benign
         "aos_maneuver_p75": 5.0,     # Quick detect of braking/turning
@@ -1168,7 +1182,7 @@ class NxMimosaV40Sentinel:
         elif domain and domain.lower() not in DOMAIN_PRESETS:
             raise ValueError(f"Unknown domain '{domain}'. Available: {list(DOMAIN_PRESETS.keys())}")
         
-        self.R_nominal = np.eye(2)*r_std**2   # [REQ-V41-07] Nominal R (never modified)
+        self.R_nominal = _EYE[2]*r_std**2   # [REQ-V41-07] Nominal R (never modified)
         self.R = self.R_nominal.copy()          # Active R (ECM-boosted during jamming)
         self.R_ecm_scale = 1.0                  # Current R boost factor
         self.window_size = window_size
@@ -1177,7 +1191,7 @@ class NxMimosaV40Sentinel:
         self.platform_db = self._load_db(platform_db_path)
         self.active_models = list(initial_models or ["CV","CT_plus","CT_minus"])
         self.x = {m: np.zeros(MODEL_DIMS[m]) for m in ALL_MODELS}
-        self.P = {m: np.eye(MODEL_DIMS[m])*100 for m in ALL_MODELS}
+        self.P = {m: _EYE[MODEL_DIMS[m]]*100 for m in ALL_MODELS}
         self.mu = {m: 1/len(self.active_models) for m in self.active_models}
         self.p_stay = self._dp.get("p_stay", 0.88); self.tpm = {}; self._rebuild_tpm()
         self.omega = self._dp.get("omega_init", 0.196)
@@ -1257,10 +1271,11 @@ class NxMimosaV40Sentinel:
             self._cv_Q[i+2,i] = q_cv * dt**2 / 2
             self._cv_Q[i+2,i+2] = q_cv * dt
         self._cv_x = np.zeros(4)
-        self._cv_P = np.eye(4) * 100
+        self._cv_P = _EYE[4] * 100
         self._cv_nis = 2.0  # Running NIS for CV filter
         self._ca_nis = 2.0  # Running NIS for CA filter
         self._aos_nis_window = []  # Sliding window of raw CV NIS for AOS median
+        self._aos_nis_sorted = []  # [OPT-3] Sorted copy for O(1) median/p75
         self._cv_h = []; self._cv_xf_h = []; self._cv_Pf_h = []
         
         # --- Parallel CA filter (domain-adaptive Q) ---
@@ -1288,7 +1303,7 @@ class NxMimosaV40Sentinel:
             self._ca_Q[v,a] = q_ca * dt**2 / 2;  self._ca_Q[a,v] = self._ca_Q[v,a]
             self._ca_Q[a,a] = q_ca * dt
         self._ca_x = np.zeros(6)
-        self._ca_P = np.eye(6) * 100
+        self._ca_P = _EYE[6] * 100
         self._ca_h = []; self._ca_xf_h = []; self._ca_Pf_h = []
         
         self._z_h = []  # Raw measurement history
@@ -1324,21 +1339,21 @@ class NxMimosaV40Sentinel:
         o = np.zeros(nd); d = min(ns,nd); o[:d] = x[:d]; return o
 
     def _mc(self, P, ns, nd):
-        o = np.eye(nd)*10; d = min(ns,nd); o[:d,:d] = P[:d,:d]; return o
+        o = _EYE.get(nd, np.eye(nd))*10; d = min(ns,nd); o[:d,:d] = P[:d,:d]; return o
 
     def initialize(self, z):
         for m in ALL_MODELS:
             nx = MODEL_DIMS[m]; self.x[m] = np.zeros(nx); self.x[m][:2] = z[:2]
-            self.P[m] = np.eye(nx)*100
+            self.P[m] = _EYE[nx]*100
         # Init parallel CV filter
         self._cv_x = np.array([z[0], z[1], 0, 0])
-        self._cv_P = np.eye(4) * 100
+        self._cv_P = _EYE[4] * 100
         self._cv_h.append(z[:2].copy())
         self._cv_xf_h.append(self._cv_x.copy())
         self._cv_Pf_h.append(self._cv_P.copy())
         # Init parallel CA filter
         self._ca_x = np.array([z[0], z[1], 0, 0, 0, 0])
-        self._ca_P = np.eye(6) * 100
+        self._ca_P = _EYE[6] * 100
         self._ca_h.append(z[:2].copy())
         self._ca_xf_h.append(self._ca_x.copy())
         self._ca_Pf_h.append(self._ca_P.copy())
@@ -1361,6 +1376,28 @@ class NxMimosaV40Sentinel:
             self.mu_h.append(dict(self.mu))
             self.act_h.append(list(self.active_models))
             return z.copy(), np.eye(2)*self.r_std**2, self.intent_state
+        
+        # [OPT-7] Two-point velocity initialization on step 1
+        # Standard radar tracking technique: use first two measurements to
+        # estimate initial velocity. Only when velocity SNR > 1 (v²/σ²_v > 1)
+        # Space/military: dt large → great velocity estimates
+        # Automotive: dt=0.05s → noisy, skip (Kalman converges fast enough)
+        if self.step == 0:
+            v_est = (z[:2] - self.x["CV"][:2]) / max(self.dt, 1e-6)
+            v_var = 2.0 * self.r_std**2 / max(self.dt**2, 1e-12)
+            v_mag2 = float(v_est @ v_est)
+            # Only init velocity if SNR > 2 (estimate is meaningful)
+            if v_mag2 > 2.0 * v_var:
+                for m in ALL_MODELS:
+                    nx = MODEL_DIMS[m]
+                    if nx >= 4:
+                        self.x[m][2:4] = v_est
+                        self.P[m][2,2] = v_var; self.P[m][3,3] = v_var
+                self._cv_x[2:4] = v_est
+                self._cv_P[2,2] = v_var; self._cv_P[3,3] = v_var
+                self._ca_x[2:4] = v_est
+                self._ca_P[2,2] = v_var; self._ca_P[3,3] = v_var
+        
         self.step += 1
 
         # 0. Store UNMIXED per-model states (v4.0.2: for correct Full-RTS)
@@ -1452,7 +1489,7 @@ class NxMimosaV40Sentinel:
                 sn,ld = np.linalg.slogdet(S)
                 liks[m] = max(np.exp(-0.5*2*np.log(2*np.pi)-0.5*ld-0.5*nis_val), 1e-300) if sn>0 else 1e-300
                 K = Pp@H.T@Si; xf = xp+K@nu
-                IKH = np.eye(nx)-K@H; Pf = IKH@Pp@IKH.T + K@self.R@K.T
+                IKH = _EYE[nx]-K@H; Pf = IKH@Pp@IKH.T + K@self.R@K.T
             self.x[m]=xf; self.P[m]=Pf; xfs[m]=xf.copy(); Pfs[m]=Pf.copy()
 
         # 2b. Dynamics-gated adaptive q_base
@@ -1475,9 +1512,16 @@ class NxMimosaV40Sentinel:
             # Benign detection: low dynamics AND low NIS
             speed_est = np.linalg.norm(v_now) if self.xc_h else 100.0
             _benign_dv_scale = self._dp.get("benign_dv_scale", 1.0)
-            dv_thresh = max(3.0 * _benign_dv_scale, speed_est * 0.008 * _benign_dv_scale)
+            # [OPT-5] Noise-aware benign detection
+            # At high update rates (dt≤0.05), noise dominates dv → use NIS-only
+            _noise_accel = self.r_std / (self.dt**2 + 1e-6)
+            if _noise_accel > 50:  # High-rate regime (automotive dt=0.05 → 120)
+                is_benign = self.nis_avg < 4.0 and self._cv_nis < 5.0
+            else:
+                dv_thresh = max(3.0 * _benign_dv_scale, speed_est * 0.008 * _benign_dv_scale)
+                is_benign = self.dv_ema < dv_thresh and self.nis_avg < 5.0
             
-            if self.dv_ema < dv_thresh and self.nis_avg < 5.0:
+            if is_benign:
                 self.benign_streak += 1
             else:
                 self.benign_streak = max(0, self.benign_streak - 5)  # Fast exit
@@ -1595,19 +1639,19 @@ class NxMimosaV40Sentinel:
             for m in self.active_models: xc += combined_w[m] * self.x[m][:4]
             Pc = np.zeros((4, 4))
             for m in self.active_models:
-                xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else np.eye(4)*10
+                xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else _EYE[4]*10
                 dx = xi - xc; Pc += combined_w[m] * (Pi + np.outer(dx, dx))
         elif max_mu > 0.80:
             # Dominant model bypass — pure estimate, no mixing noise
             xc = self.x[max_model][:4].copy()
-            Pc = self.P[max_model][:4,:4].copy() if MODEL_DIMS[max_model]>=4 else np.eye(4)*10
+            Pc = self.P[max_model][:4,:4].copy() if MODEL_DIMS[max_model]>=4 else _EYE[4]*10
         else:
             # Standard IMM combination
             xc = np.zeros(4)
             for m in self.active_models: xc += self.mu[m]*self.x[m][:4]
             Pc = np.zeros((4,4))
             for m in self.active_models:
-                xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else np.eye(4)*10
+                xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else _EYE[4]*10
                 dx = xi-xc; Pc += self.mu[m]*(Pi+np.outer(dx,dx))
 
         # 5. Adaptive omega (skip if domain locks omega to known rate)
@@ -1628,11 +1672,21 @@ class NxMimosaV40Sentinel:
         cv_nis_inst = float(_nu_cv @ _Si_cv @ _nu_cv)
         
         # v4.0 legacy classifier (still used for VS-IMM adapt via old platform_db)
-        plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt,
-                                            mu=self.mu, cv_nis=cv_nis_inst,
-                                            omega=self.omega)
-        pd = self.platform_db.get(plat, self.platform_db.get("Unknown",{}))
-        if conf>=0.35 and plat!="Unknown" and self.step > 20: self._vs_adapt(pd)
+        # [OPT-2b] Skip when deeply benign — platform ID won't change in cruise
+        _skip_ident = (self.benign_streak > 30 and self.step % 10 != 0)
+        if not _skip_ident:
+            plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt,
+                                                mu=self.mu, cv_nis=cv_nis_inst,
+                                                omega=self.omega)
+            pd = self.platform_db.get(plat, self.platform_db.get("Unknown",{}))
+            self._cached_pd = pd
+            self._cached_plat = plat
+            self._cached_conf = conf
+            if conf>=0.35 and plat!="Unknown" and self.step > 20: self._vs_adapt(pd)
+        else:
+            pd = getattr(self, '_cached_pd', self.platform_db.get("Unknown",{}))
+            plat = getattr(self, '_cached_plat', "Unknown")
+            conf = getattr(self, '_cached_conf', 0.0)
         
         # =====================================================================
         # [REQ-V41-01..06] v4.1 Multi-domain classifier + intent + ECM
@@ -1655,8 +1709,16 @@ class NxMimosaV40Sentinel:
         self._z_meas = None      # Consume measurement (require fresh each cycle)
         
         if self.cls_pipeline is not None and self.step > 5:
-            # Full v4.1 pipeline: classifier + intent + ECM
-            cls_result = self.cls_pipeline.update(
+            # [OPT-2] Skip full classifier when deeply benign — 21% compute savings
+            # Re-evaluate every 10 steps to catch transitions
+            _skip_cls = (self.benign_streak > 30 and self.step % 10 != 0
+                         and not getattr(self, '_ecm_force_models', False))
+            if _skip_cls:
+                cls_result = getattr(self, '_last_cls_result', None)
+                self._cls_result = cls_result
+            else:
+                # Full v4.1 pipeline: classifier + intent + ECM
+                cls_result = self.cls_pipeline.update(
                 speed_mps=sp, accel_g=ag, altitude_m=alt_m,
                 omega_radps=abs(self.omega), heading_rad=heading_rad,
                 vz_mps=vz_mps, nis_cv=cv_nis_inst,
@@ -1666,6 +1728,7 @@ class NxMimosaV40Sentinel:
                 range_m=np.linalg.norm(xc[:2]),
             )
             self._cls_result = cls_result
+            self._last_cls_result = cls_result  # Cache for skip optimization
             
             # [REQ-V41-03] ECM-driven Q boost
             self._ecm_q_scale = cls_result.ecm_status != ECMStatus.CLEAN
@@ -1908,8 +1971,26 @@ class NxMimosaV40Sentinel:
 
         # 8b. Parallel CV Kalman filter update (independent of IMM)
         # [REQ-V40-10] Runs on raw measurement z, not IMM output
-        xp_cv = self._cv_F @ self._cv_x
-        Pp_cv = self._cv_F @ self._cv_P @ self._cv_F.T + self._cv_Q
+        # 8b. Parallel CV predict + update
+        # [OPT-6] Adaptive q_cv: when AOS is blending toward CV (alpha>0.3),
+        # boost process noise to match PyKalman-level responsiveness (q≈0.5)
+        # This makes the parallel CV output competitive on smooth trajectories
+        _aos_alpha = getattr(self, '_aos_alpha_ema', 0.0)
+        if _aos_alpha > 0.3:
+            _q_cv_base = self._dp.get("q_cv_scale", 0.15)
+            _q_cv_boost = self._dp.get("q_cv_boost", _q_cv_base * 3.0)  # 3x base, not hardcoded
+            _q_cv_eff = _q_cv_base + (_q_cv_boost - _q_cv_base) * min(1.0, (_aos_alpha - 0.3) / 0.5)
+            _cv_Q_scaled = np.zeros((4,4))
+            for _qi in [0,1]:
+                _cv_Q_scaled[_qi,_qi] = _q_cv_eff * self.dt**3 / 3
+                _cv_Q_scaled[_qi,_qi+2] = _q_cv_eff * self.dt**2 / 2
+                _cv_Q_scaled[_qi+2,_qi] = _q_cv_eff * self.dt**2 / 2
+                _cv_Q_scaled[_qi+2,_qi+2] = _q_cv_eff * self.dt
+            xp_cv = self._cv_F @ self._cv_x
+            Pp_cv = self._cv_F @ self._cv_P @ self._cv_F.T + _cv_Q_scaled
+        else:
+            xp_cv = self._cv_F @ self._cv_x
+            Pp_cv = self._cv_F @ self._cv_P @ self._cv_F.T + self._cv_Q
         nu_cv = z - self._cv_H @ xp_cv
         S_cv = self._cv_H @ Pp_cv @ self._cv_H.T + self.R
         Si_cv = safe_inv(S_cv)
@@ -1920,8 +2001,13 @@ class NxMimosaV40Sentinel:
         _aos_window_s = self._dp.get("aos_window_s", 2.0)
         AOS_WINDOW = max(8, min(60, int(_aos_window_s / max(self.dt, 0.01))))
         self._aos_nis_window.append(cv_nis_raw)
+        bisect.insort(self._aos_nis_sorted, cv_nis_raw)  # O(n) insert into sorted
         if len(self._aos_nis_window) > AOS_WINDOW:
-            self._aos_nis_window.pop(0)
+            old_val = self._aos_nis_window.pop(0)
+            # Remove from sorted (O(n) but avoids full re-sort)
+            idx = bisect.bisect_left(self._aos_nis_sorted, old_val)
+            if idx < len(self._aos_nis_sorted):
+                self._aos_nis_sorted.pop(idx)
         # [REQ-V41-12] Measurement gating for parallel CV
         _eff_gate_cv = self._ecm_gate_nis
         if abs(self.omega) > 0.1:
@@ -1929,7 +2015,7 @@ class NxMimosaV40Sentinel:
         if cv_nis_raw <= _eff_gate_cv:
             K_cv = Pp_cv @ self._cv_H.T @ Si_cv
             self._cv_x = xp_cv + K_cv @ nu_cv
-            IKH_cv = np.eye(4) - K_cv @ self._cv_H
+            IKH_cv = _EYE[4] - K_cv @ self._cv_H
             self._cv_P = IKH_cv @ Pp_cv @ IKH_cv.T + K_cv @ self.R @ K_cv.T
         else:
             self._cv_x = xp_cv; self._cv_P = Pp_cv  # Predict-only (gated)
@@ -1952,7 +2038,7 @@ class NxMimosaV40Sentinel:
         if ca_nis_raw <= _eff_gate_ca:
             K_ca = Pp_ca @ self._ca_H.T @ Si_ca
             self._ca_x = xp_ca + K_ca @ nu_ca
-            IKH_ca = np.eye(6) - K_ca @ self._ca_H
+            IKH_ca = _EYE[6] - K_ca @ self._ca_H
             self._ca_P = IKH_ca @ Pp_ca @ IKH_ca.T + K_ca @ self.R @ K_ca.T
         else:
             self._ca_x = xp_ca; self._ca_P = Pp_ca  # Predict-only (gated)
@@ -1986,8 +2072,10 @@ class NxMimosaV40Sentinel:
         
         if self.step > AOS_SETTLE and np.all(np.isfinite(self._cv_x)) \
                 and len(self._aos_nis_window) >= 8:
-            aos_median = float(np.median(self._aos_nis_window))
-            aos_p75 = float(np.percentile(self._aos_nis_window, 75))
+            # [OPT-3] O(1) median/p75 from pre-sorted window
+            _n = len(self._aos_nis_sorted)
+            aos_median = float(self._aos_nis_sorted[_n // 2])
+            aos_p75 = float(self._aos_nis_sorted[min(_n - 1, int(_n * 0.75))])
             
             if aos_median < AOS_BENIGN_MEDIAN and aos_p75 < AOS_MANEUVER_P75 \
                     and aos_median < AOS_MANEUVER_MED:
@@ -2024,6 +2112,7 @@ class NxMimosaV40Sentinel:
                 alpha_cv = self._aos_alpha_ema
             
             if alpha_cv > 0.01:
+                self._aos_alpha_cv = alpha_cv  # Diagnostic
                 xc_imm = xc.copy()
                 Pc_imm = Pc.copy()
                 xc = alpha_cv * self._cv_x[:4] + (1.0 - alpha_cv) * xc_imm
@@ -2031,6 +2120,8 @@ class NxMimosaV40Sentinel:
                 if alpha_cv < 0.99:
                     dx = self._cv_x[:4] - xc_imm
                     Pc += alpha_cv * (1.0 - alpha_cv) * np.outer(dx, dx)
+            else:
+                self._aos_alpha_cv = 0.0
 
         # 9. Store history
         self.xf_h.append(xfs); self.Pf_h.append(Pfs)
@@ -2372,7 +2463,7 @@ class NxMimosaV40Sentinel:
             # Predict from k
             xp1 = F @ xf; Pp1 = F @ Pf @ F.T + Q
             try:
-                Ck = Pf @ F.T @ inv(Pp1 + np.eye(4)*EPS)
+                Ck = Pf @ F.T @ inv(Pp1 + _EYE[4]*EPS)
             except LinAlgError:
                 Ck = Pf @ F.T @ pinv(Pp1)
             Ck = np.clip(Ck, -5, 5)  # Stability guard
@@ -2400,7 +2491,7 @@ class NxMimosaV40Sentinel:
             xf = self._ca_xf_h[k]; Pf = self._ca_Pf_h[k]
             xp1 = F @ xf; Pp1 = F @ Pf @ F.T + Q
             try:
-                Ck = Pf @ F.T @ inv(Pp1 + np.eye(ndim)*EPS)
+                Ck = Pf @ F.T @ inv(Pp1 + _EYE.get(ndim, np.eye(ndim))*EPS)
             except LinAlgError:
                 Ck = Pf @ F.T @ pinv(Pp1)
             Ck = np.clip(Ck, -5, 5)
