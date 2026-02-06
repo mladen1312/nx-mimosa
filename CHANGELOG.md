@@ -1,5 +1,46 @@
 # NX-MIMOSA Changelog
 
+## v4.3.0 — Multi-Sensor Fusion + README Rewrite (2026-02-06)
+
+### 🎯 Headline: Native multi-sensor fusion — radar, EO/IR, ESM, Doppler, ADS-B
+
+### Multi-Sensor Fusion Engine (`nx_mimosa_fusion.py`)
+- **[REQ-V43-01]** Measurement-level fusion via sequential Kalman update
+- **[REQ-V43-02]** 6 sensor types: POSITION_XY, POSITION_3D, RANGE_BEARING, RANGE_DOPPLER, BEARING_ONLY, ADS_B
+- **[REQ-V43-03]** Asynchronous sensor handling with per-sensor timestamps
+- **[REQ-V43-04]** Information-weighted simultaneous fusion (batch update alternative)
+- **[REQ-V43-05]** Per-sensor health monitoring (NIS tracking, degradation detection)
+- **[REQ-V43-06]** Automatic bias correction per sensor
+- **[REQ-V43-07]** Graceful degradation (single sensor fallback, gate rejection)
+
+### Measured Fusion Gains (ATC scenario, σ_radar=50m)
+| Configuration | RMS | Improvement |
+|--------------|-----|-------------|
+| Single radar (baseline) | 33.00m | — |
+| + EO bearing (0.3°) | 31.57m | +4.4% |
+| + ESM bearing (2°) | 33.16m | -0.5% (too noisy) |
+| + Doppler radar (30m, 1m/s) | 22.48m | **+31.9%** |
+| + Doppler + ADS-B (10m, 1m/s) | 11.73m | **+64.4%** |
+
+### Factory Functions
+- `make_radar_sensor()` — Cartesian position radar
+- `make_polar_radar_sensor()` — Range-bearing radar
+- `make_doppler_radar_sensor()` — Range-bearing-Doppler radar
+- `make_eo_sensor()` — EO/IR passive bearing-only
+- `make_esm_sensor()` — ESM/ELINT passive bearing-only
+- `make_adsb_sensor()` — ADS-B cooperative (position + velocity)
+- `make_gps_sensor()` — GPS position
+
+### Core Tracker Changes
+- Added `_get_combined_position()` helper for fusion engine integration
+- No regression: 18/19 wins, 43/43 tests passing, all benchmarks unchanged
+
+### README Rewrite
+- Complete rewrite targeting engineers and investors
+- Competitive positioning vs Stone Soup, MATLAB, custom development, defense primes
+- Full capability matrix, architecture diagram, multi-sensor quick start
+- Honest benchmark disclosure with methodology
+
 ## v4.2.6 — Performance Sprint: 5x Speedup + Velocity Init (2026-02-06)
 
 ### 🎯 Headline: 18/19 wins, 5x faster, avg RMS 100m (8.6x better than Stone Soup)

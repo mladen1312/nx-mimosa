@@ -2363,6 +2363,19 @@ class NxMimosaV40Sentinel:
         }
 
     # =========================================================================
+    # Multi-Sensor Fusion Support
+    # =========================================================================
+    def _get_combined_position(self) -> np.ndarray:
+        """Get IMM-combined position estimate (for fusion engine)."""
+        if self.xc_h:
+            return self.xc_h[-1][:2].copy()
+        # Fallback: weighted average of active models
+        xc = np.zeros(4)
+        for m in self.active_models:
+            xc += self.mu[m] * self.x[m][:4]
+        return xc[:2]
+
+    # =========================================================================
     # Smoothers — Per-model RTS
     # =========================================================================
     def get_forward_estimates(self): return [x[:2].copy() for x in self.xc_h]

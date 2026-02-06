@@ -29,6 +29,6 @@ python benchmarks/multi_domain_benchmark.py
 | S16 | LEO Satellite | SPACE | 4194.55 | 6450.92 | 6916.74 | **1011.93** ★ | **NX-MIMOSA** |
 | S17 | GEO Stationkeeping | SPACE | 68.94 | 70.03 | 71.39 | **65.42** ★ | **NX-MIMOSA** |
 | S18 | Orbital Maneuver | SPACE | 5670.49 | 8655.95 | 9863.84 | **105.14** ★ | **NX-MIMOSA** |
-| S19 | Reentry Vehicle | SPACE | 6077.76 | 14724.27 | 9297.91 | **483.48** ★ | **NX-MIMOSA** |
+| S19 | Reentry Vehicle | SPACE | 6077.77 | 14724.27 | 9297.91 | **483.48** ★ | **NX-MIMOSA** |
 
 **Overall: Stone Soup 0/19 | FilterPy 0/19 | PyKalman 1/19 | NX-MIMOSA 18/19**
