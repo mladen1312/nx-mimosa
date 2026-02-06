@@ -1,5 +1,27 @@
 # NX-MIMOSA Changelog
 
+## v5.0.1 — "FULL SPECTRUM + MHT" (2026-02-06)
+
+### 🎯 Headline: MHT Data Association + pip Packaging + Sphinx Documentation
+
+**Commercial readiness: 70% → 75%**
+
+#### New Features
+- **MHT (Multi-Hypothesis Tracking)** — Third data association algorithm. Generates ranked global hypotheses via log-likelihood scoring, selects best assignment. Best for dense, ambiguous environments. Reference: Reid (1979).
+- **pip packaging** — `pip install nx-mimosa` with proper `pyproject.toml`, wheel build, `nx_mimosa` package namespace
+- **Sphinx documentation** — Full RTD-themed docs: quickstart, user guides (multi-target, sensors, coordinates, metrics), API reference with autodoc
+- **Package `__init__.py`** — Clean top-level imports: `from nx_mimosa import MultiTargetTracker`
+
+#### Tests
+- 5 new MHT tests: basic, two-targets, clutter, enum selection, crossing targets
+- **141/141 tests PASS** (136 existing + 5 MHT)
+
+#### Documentation
+- `docs/source/` — Complete Sphinx project (conf.py, index.rst, 8 guide/API pages)
+- README completely rewritten for sales conversion — storytelling, use cases, ROI calculator, "What Only NX-MIMOSA Has" section
+
+---
+
 ## v5.0.0 — "FULL SPECTRUM" (2026-02-06)
 
 ### 🎯 Headline: 3D Multi-Target Tracker with GNN + JPDA — Four Critical Blockers Eliminated
