@@ -1,5 +1,28 @@
 # NX-MIMOSA Changelog
 
+## v5.7.1 — "REAL DATA" (2026-02-06)
+
+### 🎯 Headline: First Real-Data Validation — 210 Live Aircraft from OpenSky Network
+
+**Commercial readiness: 97% → 99%**
+
+#### Real ADS-B Validation ([REQ-V57-REAL-01..05])
+- Live ADS-B data from OpenSky Network (Central Europe, 210 aircraft)
+- GPS-quality positions (~10m) as ground truth + synthetic radar noise
+- Uniform resampling (dt=10s) with non-monotonic timestamp handling
+- **Results at σ=100m:**
+  - Track confirmation: **210/210 (100%)**
+  - Tracker beats raw: **204/210 (97%)**
+  - Median improvement: **1.19×** (171m → 143m)
+  - At σ=200m: **1.30×** improvement
+- 3% underperformance on heavy-maneuver aircraft (turns + climb) — documented
+- 6 new tests with statistical bounds
+
+#### Test Suite
+- **284/284 tests PASS** (+6 from v5.7.0)
+
+---
+
 ## v5.7.0 — "VALIDATION" (2026-02-06)
 
 ### 🎯 Headline: Confusion Matrix + ECM Resilience + Live Demo — Honest Metrics

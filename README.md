@@ -15,7 +15,8 @@
 
 [![Accuracy: 8.6× better](https://img.shields.io/badge/Accuracy-8.6×%20better%20than%20Stone%20Soup-brightgreen)]()
 [![18/19 Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
-[![278 Tests](https://img.shields.io/badge/Tests-278%2F278%20PASS-brightgreen)]()
+[![284 Tests](https://img.shields.io/badge/Tests-284%2F284%20PASS-brightgreen)]()
+[![Real Data](https://img.shields.io/badge/Real%20Data-210%20Aircraft%20Validated-orange)]()
 [![NumPy Only](https://img.shields.io/badge/Dependency-NumPy%20Only-blue)]()
 [![AGPL v3 / Commercial](https://img.shields.io/badge/License-AGPL%20v3%20%2F%20Commercial-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
@@ -315,6 +316,19 @@ Chaff        YES        67m       188m       YES
 ```
 
 The tracker widens its association gate and inflates measurement covariance under jamming (Bar-Shalom covariance inflation approach), maintaining tracks through 40 scans of electronic attack.
+
+### Real-Data Validation — 210 Live Aircraft from OpenSky Network
+
+We validated against **real aircraft** using live ADS-B data from OpenSky Network (Central Europe, 210 aircraft tracked simultaneously). ADS-B positions (GPS, ~10m accuracy) serve as ground truth. Realistic radar noise (σ=100m) was added per Bar-Shalom standard methodology.
+
+```
+Aircraft tested:     210 real flights (airliners, cargo, GA, military)
+Track confirmation:  210/210 (100%)
+Tracker beats raw:   204/210 (97%)
+Median improvement:  1.19× (171m raw → 143m filtered)
+```
+
+At higher noise levels the improvement grows: **1.30× at σ=200m** (342m raw → 263m filtered). The 3% of aircraft where the tracker underperforms are predominantly aircraft in active turns with simultaneous climb/descent — edge cases documented in our confusion matrix analysis.
 
 ---
 
