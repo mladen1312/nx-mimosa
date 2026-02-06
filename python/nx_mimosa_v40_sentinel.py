@@ -1034,15 +1034,15 @@ DOMAIN_PRESETS = {
     # Key: standard rate turn = 3°/s, ILS = gentle deceleration
     "atc": {
         "models":        ["CV", "CA", "CT_plus", "CT_minus", "Jerk"],  # Full bank
-        "omega_init":    0.196,      # Keep default — adaptive will find 3°/s
+        "omega_init":    0.196,      # Default — adaptive system finds correct rate
         "p_stay":        0.88,       # Standard — fast CV↔CT switching
         "q_cv_scale":    0.025,
         "q_ca_scale":    0.1,
         "aos_benign_med": 3.0,
         "aos_maneuver_p75": 6.0,
         "aos_maneuver_med": 4.0,
-        "aos_settle":    20,         # 80s at 4s update — full holding legs before AOS
-        "aos_window_s":  80.0,       # 80s = 20 steps at 4s — match old min-20 behavior
+        "aos_settle":    20,         # 80s at 4s — full hold legs before AOS
+        "aos_window_s":  80.0,       # 80s = match old min-20 behavior
         "benign_dv_scale": 1.0,
         "benign_q_targets": [0.10, 0.20, 0.45],  # Standard — don't over-reduce
         "benign_streaks":   [25, 15, 8],
@@ -1101,7 +1101,7 @@ DOMAIN_PRESETS = {
         "models":        ["CV", "CA", "CT_plus", "CT_minus"],
         "omega_init":    np.radians(0.01),
         "p_stay":        0.95,
-        "q_cv_scale":    0.001,      # Match old computed: max(0.001*0.5, 0.001) = 0.001
+        "q_cv_scale":    0.001,      # Balance: LEO needs tracking, GEO needs stability
         "q_ca_scale":    0.01,
         "aos_benign_med": 4.0,
         "aos_maneuver_p75": 8.0,
