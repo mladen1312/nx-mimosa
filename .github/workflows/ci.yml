@@ -41,16 +41,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: |
-          pip install numpy pytest
+          pip install numpy pytest pytest-cov
           pip install -e .
-      - name: Run tests
-        run: pytest tests/ -v --tb=short --junitxml=results-${{ matrix.python-version }}.xml
+      - name: Run tests with coverage
+        run: pytest tests/ -v --tb=short --junitxml=results-${{ matrix.python-version }}.xml --cov=python --cov=nx_mimosa --cov-report=xml:coverage-${{ matrix.python-version }}.xml --cov-report=term-missing
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results-${{ matrix.python-version }}
-          path: results-*.xml
+          path: |
+            results-*.xml
+            coverage-*.xml
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage-3.12.xml
+          flags: unittests
+          fail_ci_if_error: false
 
   # ========================================
   # Stage 3: Build + Package Verification
