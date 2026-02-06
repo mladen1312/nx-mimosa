@@ -63,15 +63,15 @@ Each preset configures 15+ internal parameters: model bank, AOS thresholds, TPM,
 
 | Domain | Scenarios | dt | R_std | NX Wins | Description |
 |--------|---:|---:|---:|---:|---|
-| **ATC** | 4 | 4.0s | 50m | 3/4 | Enroute, holding, ILS, go-around |
+| **ATC** | 4 | 4.0s | 50m | **4/4** | Enroute, holding, ILS, go-around |
 | **Aviation** | 3 | 1.0s | 15m | 3/3 | Wind shear, turbulence, TCAS RA |
 | **Military** | 4 | 0.1s | 5m | 4/4 | Intercept, SAM, cruise missile, helo NOE |
 | **Automotive** | 4 | 0.05s | 0.3m | 3/4 | Highway, intersection, e-brake, lane change |
 | **Space** | 4 | 10s | 100m | 4/4 | LEO, GEO, orbital burn, reentry |
 
-**Grand totals:** NX-MIMOSA **17/19** wins | Stone Soup 0/19 | FilterPy 1/19 | PyKalman 1/19
+**Grand totals:** NX-MIMOSA **18/19** wins | Stone Soup 0/19 | FilterPy 0/19 | PyKalman 1/19
 
-**Where NX-MIMOSA loses** — ATC holding pattern (FilterPy IMM has domain-matched 3°/s CT omega: 56.5m vs NX 76.6m) and highway lane change (pure CV optimal for gentle sinusoidal: 0.18m vs NX 0.20m, gap = 2cm). See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
+**Where NX-MIMOSA loses** — Highway lane change only (pure CV optimal for gentle sinusoidal: 0.18m vs NX 0.20m, gap = 2cm). This is fundamental IMM overhead on a single-mode trajectory. See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
 
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 

@@ -11,10 +11,10 @@ python benchmarks/multi_domain_benchmark.py
 
 | ID | Scenario | Domain | Stone Soup | FilterPy | PyKalman | NX-MIMOSA | Winner |
 |---|---|---|---:|---:|---:|---:|---|
-| S01 | Enroute Cruise | ATC | 69.98 | 96.71 | 109.75 | **38.17** ★ | **NX-MIMOSA** |
-| S02 | Holding Pattern | ATC | 72.23 | **56.50** ★ | 77.18 | 76.56 | FilterPy |
-| S03 | ILS Approach | ATC | 39.77 | 42.33 | 48.17 | **34.89** ★ | **NX-MIMOSA** |
-| S04 | Missed Approach | ATC | 59.27 | 73.55 | 69.55 | **50.52** ★ | **NX-MIMOSA** |
+| S01 | Enroute Cruise | ATC | 69.98 | 96.71 | 109.75 | **37.51** ★ | **NX-MIMOSA** |
+| S02 | Holding Pattern | ATC | 72.23 | 56.50 | 77.18 | **55.38** ★ | **NX-MIMOSA** |
+| S03 | ILS Approach | ATC | 39.77 | 42.33 | 48.17 | **35.39** ★ | **NX-MIMOSA** |
+| S04 | Missed Approach | ATC | 59.27 | 73.55 | 69.55 | **51.08** ★ | **NX-MIMOSA** |
 | S05 | Cruise + Wind Shear | AVIATION | 16.06 | 19.64 | 21.04 | **14.73** ★ | **NX-MIMOSA** |
 | S06 | Turbulence | AVIATION | 17.72 | 20.43 | 23.04 | **16.70** ★ | **NX-MIMOSA** |
 | S07 | TCAS RA Climb | AVIATION | 24.79 | 31.22 | 33.50 | **18.74** ★ | **NX-MIMOSA** |
@@ -31,4 +31,4 @@ python benchmarks/multi_domain_benchmark.py
 | S18 | Orbital Maneuver | SPACE | 5670.49 | 8655.95 | 9863.84 | **5441.30** ★ | **NX-MIMOSA** |
 | S19 | Reentry Vehicle | SPACE | 6077.76 | 14724.27 | 9297.91 | **4938.52** ★ | **NX-MIMOSA** |
 
-**Overall: Stone Soup 0/19 | FilterPy 1/19 | PyKalman 1/19 | NX-MIMOSA 17/19**
+**Overall: Stone Soup 0/19 | FilterPy 0/19 | PyKalman 1/19 | NX-MIMOSA 18/19**

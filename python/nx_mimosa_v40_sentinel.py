@@ -1034,10 +1034,12 @@ DOMAIN_PRESETS = {
     # Key: standard rate turn = 3°/s, ILS = gentle deceleration
     "atc": {
         "models":        ["CV", "CA", "CT_plus", "CT_minus", "Jerk"],  # Full bank
-        "omega_init":    0.196,      # Default — adaptive system finds correct rate
+        "omega_init":    np.radians(3.0),  # Standard rate turn — FAA/ICAO standard
+        "omega_lock":    True,       # Lock omega — standard rate is regulatory constant
         "p_stay":        0.88,       # Standard — fast CV↔CT switching
         "q_cv_scale":    0.025,
         "q_ca_scale":    0.1,
+        "protected_models": ["CT_plus", "CT_minus"],  # Never prune CT in ATC!
         "aos_benign_med": 3.0,
         "aos_maneuver_p75": 6.0,
         "aos_maneuver_med": 4.0,
@@ -1608,8 +1610,8 @@ class NxMimosaV40Sentinel:
                 xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else np.eye(4)*10
                 dx = xi-xc; Pc += self.mu[m]*(Pi+np.outer(dx,dx))
 
-        # 5. Adaptive omega
-        if self.xc_h:
+        # 5. Adaptive omega (skip if domain locks omega to known rate)
+        if not self._dp.get("omega_lock", False) and self.xc_h:
             vx,vy = xc[2],xc[3]; pv = self.xc_h[-1]
             sp = np.sqrt(vx**2+vy**2); psp = np.sqrt(pv[2]**2+pv[3]**2)
             if sp>10 and psp>10:
@@ -1833,7 +1835,9 @@ class NxMimosaV40Sentinel:
                 if pref_v41 and set(pref_v41) != set(self.active_models):
                     # Merge: v4.1 classifier overrides when confident
                     # CA is CORE — always included (parallel hardware, no cost)
-                    na = list(set(["CV", "CA"] + pref_v41))
+                    # [REQ-V42-DOMAIN] Domain-protected models always included
+                    protected = self._dp.get("protected_models", [])
+                    na = list(set(["CV", "CA"] + pref_v41 + protected))
                     na = [m for m in na if m in ALL_MODELS]
                     if na != self.active_models:
                         old_mu = dict(self.mu)
@@ -2113,7 +2117,9 @@ class NxMimosaV40Sentinel:
     def _vs_adapt(self, pd):
         pref = pd.get("preferred_models", ALL_MODELS[:3])
         # CA is CORE — always active alongside CV (acceleration is too common to prune)
-        na = list(set(["CV", "CA"]+pref)); na = [m for m in na if m in ALL_MODELS]
+        # [REQ-V42-DOMAIN] Domain-protected models always included
+        protected = self._dp.get("protected_models", [])
+        na = list(set(["CV", "CA"]+pref+protected)); na = [m for m in na if m in ALL_MODELS]
         if set(na)==set(self.active_models):
             self._tpm_bias(pd); return
         old = dict(self.mu); self.active_models = na
@@ -2138,8 +2144,11 @@ class NxMimosaV40Sentinel:
 
     def _prune(self):
         if len(self.active_models)<=1: return
-        # During sustained benign flight, allow collapse to core set
-        CORE_MODELS = {"CV", "CA"}  # Never prune these
+        # [REQ-V42-DOMAIN] Domain-specific core models that are never pruned
+        CORE_MODELS = {"CV", "CA"}
+        # Add domain-protected models (e.g., CT in ATC for holding patterns)
+        for pm in self._dp.get("protected_models", []):
+            CORE_MODELS.add(pm)
         min_models = 2 if self.benign_streak > 30 else 2
         if len(self.active_models)<=min_models: return
         rm = [m for m in self.active_models
