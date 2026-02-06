@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nx-mimosa"
+version = "5.0.0"
+description = "Production-ready multi-sensor multi-target radar tracker with platform identification, ECM detection, and intent prediction"
+readme = "README.md"
+license = {text = "AGPL-3.0-or-later"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Mladen Mešter", email = "mladen@nexellum.com"},
+]
+keywords = [
+    "radar", "tracking", "kalman-filter", "imm", "multi-target",
+    "multi-sensor", "data-association", "jpda", "mht", "gnn",
+    "platform-identification", "ecm", "electronic-warfare",
+    "signal-processing", "defense", "aerospace", "adas", "autonomous-driving",
+    "satellite-tracking", "air-traffic-control", "sensor-fusion",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "sphinx-autodoc-typehints>=1.25",
+]
+benchmark = [
+    "stonesoup",
+    "filterpy",
+    "pykalman",
+    "matplotlib",
+]
+
+[project.urls]
+Homepage = "https://github.com/mladen1312/nx-mimosa"
+Documentation = "https://nx-mimosa.readthedocs.io"
+Repository = "https://github.com/mladen1312/nx-mimosa"
+Issues = "https://github.com/mladen1312/nx-mimosa/issues"
+Changelog = "https://github.com/mladen1312/nx-mimosa/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nx_mimosa*", "python*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
