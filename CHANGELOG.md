@@ -1,5 +1,24 @@
 # NX-MIMOSA Changelog
 
+## v5.2.0 — "SENSOR FUSION COMPLETE" (2026-02-06)
+
+### 🎯 Headline: Sensor Bias Estimation + OOSM + Native Doppler — Tier-2 Complete
+
+**Commercial readiness: 75% → 80%**
+
+#### New Features
+- **SensorBiasEstimator** — Online EWMA estimation of range/azimuth/elevation bias from track innovations. Detects and corrects systematic sensor errors. Reference: Bar-Shalom (2001) §6.6.
+- **OOSMHandler** — Out-of-sequence measurement processing via retrodiction + re-prediction + covariance intersection merge. Handles multi-sensor latency mismatch. Reference: Bar-Shalom (2002).
+- **Native Doppler** — `doppler_measurement_matrix()` computes geometry-aware H for range-rate, `compute_radial_velocity()` for Doppler prediction, `make_cv3d_doppler_matrices()` for extended state-space.
+
+#### Tests
+- 7 SensorBiasEstimator tests: zero-bias, range bias detection, azimuth bias, correction, insufficient samples, reset, 2D
+- 5 OOSMHandler tests: save_state, can_handle, basic OOSM processing, reject old, empty history
+- 7 Doppler tests: matrices shape, head-on geometry, diagonal LOS, radial velocities (head-on/receding/tangential/degenerate)
+- **160/160 tests PASS**
+
+---
+
 ## v5.0.1 — "FULL SPECTRUM + MHT" (2026-02-06)
 
 ### 🎯 Headline: MHT Data Association + pip Packaging + Sphinx Documentation
