@@ -1,20 +1,51 @@
 # NX-MIMOSA
 
-### Adaptive Multi-Sensor Target Tracker for Radar, EO/IR, ESM, and ADS-B
+<p align="center">
+  <img src="docs/nx-mimosa-architecture.jpg" alt="NX-MIMOSA: Physics-First Radar Architecture" width="900">
+</p>
+
+### Adaptive Multi-Sensor Multi-Target Tracker for Radar, EO/IR, ESM, and ADS-B
 
 <p align="center">
-  <strong>One parameter. Any sensor. Any domain. 8.6× more accurate than the nearest open-source alternative.</strong>
+  <strong>One parameter. Any sensor. Any domain. 3D multi-target. 8.6× more accurate than the nearest open-source alternative.</strong>
 </p>
 
 [![18/19 Benchmark Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
 [![Avg RMS 100m](https://img.shields.io/badge/Avg%20RMS-100.26m%20vs%20866m-brightgreen)]()
 [![5 Domains](https://img.shields.io/badge/Domains-ATC%20|%20Aviation%20|%20Military%20|%20Auto%20|%20Space-blue)]()
 [![Multi-Sensor](https://img.shields.io/badge/Sensors-Radar%20|%20EO%2FIR%20|%20ESM%20|%20Doppler%20|%20ADS--B-blue)]()
-[![Tests: 43/43](https://img.shields.io/badge/Tests-43%2F43%20PASS-brightgreen)]()
+[![3D Multi-Target](https://img.shields.io/badge/3D-Multi--Target%20GNN%20%2B%20JPDA-brightgreen)]()
+[![Tests: 136/136](https://img.shields.io/badge/Tests-136%2F136%20PASS-brightgreen)]()
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)]()
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 **Nexellum d.o.o.** — Dr. Mladen Mešter — [mladen@nexellum.com](mailto:mladen@nexellum.com)
+
+---
+
+## 🚀 v5.0 — Full 3D Multi-Target Tracker
+
+**Four critical capabilities added in v5.0:**
+
+| Capability | Status | What It Means |
+|-----------|--------|--------------|
+| **3D Tracking** | ✅ NEW | Full [x,y,z,vx,vy,vz] state vector. CV3D, CA3D, CT3D motion models. IMM bank in 3D. |
+| **Multi-Target (GNN + JPDA)** | ✅ NEW | Track N targets simultaneously. Hungarian algorithm (GNN) + Joint Probabilistic DA (JPDA). |
+| **Track Management** | ✅ NEW | M-of-N init/confirm/delete. Tentative→Confirmed→Coasting→Deleted lifecycle. |
+| **Coordinate Transforms** | ✅ NEW | WGS-84 ↔ ECEF ↔ ENU ↔ Spherical. Unbiased conversion (Bar-Shalom). EKF Jacobians. |
+| **SIAP Metrics** | ✅ NEW | OSPA, NEES, NIS, completeness, purity, spuriousness (NATO standard). |
+| **Domain Presets** | ✅ NEW | military, atc, automotive, space, maritime — one parameter auto-tunes everything. |
+
+```python
+from nx_mimosa_mtt import MultiTargetTracker
+
+mtt = MultiTargetTracker(dt=1.0, r_std=50.0, domain="military", association="jpda")
+
+for scan in radar_scans:
+    confirmed_tracks = mtt.process_scan(measurements_3d)
+    for track in confirmed_tracks:
+        print(f"Track {track.track_id}: pos={track.filter.position}, vel={track.filter.velocity}")
+```
 
 ---
 
