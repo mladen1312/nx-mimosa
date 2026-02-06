@@ -1374,17 +1374,56 @@ class NxMimosaV40Sentinel:
             self.p_stay = max(0.80, 0.86 - dom_nis_penalty)
         self._rebuild_tpm()
 
-        # 4. Combined estimate with dominant-model bypass
-        # When one model strongly dominates (>92%), use its estimate directly
-        # to avoid IMM mixing noise from low-weight models
+        # 4. Combined estimate — NIS-GATED PARALLEL ARBITRATION
+        # [REQ-V42-10] On FPGA, all models run simultaneously in parallel.
+        # Standard IMM: xc = Σ μ_i·x_i — slow to switch (μ lags by many steps)
+        # Parallel arbitration: when dominant model's NIS is high (bad prediction),
+        # instantly weight toward model with best NIS (lowest prediction error).
+        # This exploits the fact that all model outputs are available simultaneously.
+        
         max_model = max(self.active_models, key=lambda m: self.mu[m])
         max_mu = self.mu[max_model]
+        dom_nis = nis_models.get(max_model, 0)
         
-        if max_mu > 0.80:
+        # Compute NIS-based weights (inverse NIS = better prediction = more weight)
+        # Only activate arbitration when dominant model is clearly wrong
+        NIS_ARBIT_THRESHOLD = 10.0  # NIS > 10 → dominant model prediction unreliable
+        
+        if dom_nis > NIS_ARBIT_THRESHOLD and self.step > 8:
+            # PARALLEL ARBITRATION MODE — hardware picks best predictor
+            # Weight = 1/(NIS + ε) — model with best prediction gets most weight
+            nis_weights = {}
+            for m in self.active_models:
+                nis_m = max(nis_models.get(m, 50.0), 0.5)  # floor at 0.5
+                nis_weights[m] = 1.0 / nis_m
+            
+            # Blend: α · NIS_weights + (1-α) · Bayesian_mu
+            # α scales with how wrong the dominant model is (NIS 10→α=0.3, NIS 50+→α=0.8)
+            alpha = min(0.8, 0.1 + 0.7 * (dom_nis - NIS_ARBIT_THRESHOLD) / 40.0)
+            
+            combined_w = {}
+            nis_total = sum(nis_weights.values())
+            for m in self.active_models:
+                w_nis = nis_weights[m] / nis_total
+                w_mu = self.mu[m]
+                combined_w[m] = alpha * w_nis + (1 - alpha) * w_mu
+            
+            # Normalize
+            w_total = sum(combined_w.values())
+            combined_w = {m: w / w_total for m, w in combined_w.items()}
+            
+            xc = np.zeros(4)
+            for m in self.active_models: xc += combined_w[m] * self.x[m][:4]
+            Pc = np.zeros((4, 4))
+            for m in self.active_models:
+                xi = self.x[m][:4]; Pi = self.P[m][:4,:4] if MODEL_DIMS[m]>=4 else np.eye(4)*10
+                dx = xi - xc; Pc += combined_w[m] * (Pi + np.outer(dx, dx))
+        elif max_mu > 0.80:
             # Dominant model bypass — pure estimate, no mixing noise
             xc = self.x[max_model][:4].copy()
             Pc = self.P[max_model][:4,:4].copy() if MODEL_DIMS[max_model]>=4 else np.eye(4)*10
         else:
+            # Standard IMM combination
             xc = np.zeros(4)
             for m in self.active_models: xc += self.mu[m]*self.x[m][:4]
             Pc = np.zeros((4,4))
@@ -1616,7 +1655,8 @@ class NxMimosaV40Sentinel:
                 pref_v41 = cls_result.preferred_models
                 if pref_v41 and set(pref_v41) != set(self.active_models):
                     # Merge: v4.1 classifier overrides when confident
-                    na = list(set(["CV"] + pref_v41))
+                    # CA is CORE — always included (parallel hardware, no cost)
+                    na = list(set(["CV", "CA"] + pref_v41))
                     na = [m for m in na if m in ALL_MODELS]
                     if na != self.active_models:
                         old_mu = dict(self.mu)
@@ -1644,9 +1684,9 @@ class NxMimosaV40Sentinel:
             if self.xc_h:
                 dv = np.linalg.norm(xc[2:4] - self.xc_h[-1][2:4])
                 if dv > 15 * self.dt:  # Significant acceleration detected
-                    self.active_models = ["CV", "CT_plus", "CT_minus"]
-                    self.mu = {"CV": 0.6, "CT_plus": 0.2, "CT_minus": 0.2}
-                    for m in ["CT_plus", "CT_minus"]:
+                    self.active_models = ["CV", "CA", "CT_plus", "CT_minus"]
+                    self.mu = {"CV": 0.4, "CA": 0.3, "CT_plus": 0.15, "CT_minus": 0.15}
+                    for m in ["CA", "CT_plus", "CT_minus"]:
                         self.x[m] = self._ms(self.x["CV"], 4, MODEL_DIMS[m])
                         self.P[m] = self._mc(self.P["CV"], 4, MODEL_DIMS[m])
                     self._rebuild_tpm()

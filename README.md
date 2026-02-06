@@ -32,9 +32,9 @@ Unlike generic tracking libraries, NX-MIMOSA dynamically adapts its motion model
 | Stone Soup (best of CV/CA/Singer) | 7.2 | 9.0 | 11.9 | **7.7** ★ | 13.3 | 15.1 | 13.1 | **11.0** | **1/7** |
 | FilterPy (best of CV/IMM) | 7.7 | 9.7 | 15.1 | 42.5 | 12.3 | 8.3 | 17.8 | **16.2** | **0/7** |
 | PyKalman (best of CV/CA) | 7.6 | 9.3 | 12.7 | 9.0 | 13.4 | 15.3 | 13.5 | **11.5** | **0/7** |
-| **NX-MIMOSA v4.2** | **6.5** ★ | **8.2** ★ | **9.7** ★ | 9.3 | **7.7** ★ | **7.3** ★ | **11.3** ★ | **8.6** | **6/7** |
+| **NX-MIMOSA v4.2** | **6.5** ★ | **8.2** ★ | **9.7** ★ | **4.9** ★ | **7.7** ★ | **7.3** ★ | **11.3** ★ | **8.0** | **7/7** |
 
-**Honest disclosure:** NX-MIMOSA loses Scenario 4 (Acceleration) to Stone Soup KF-CA (7.7m vs 9.3m, +20%). Pure constant-acceleration is tailor-made for a dedicated CA-only filter; NX-MIMOSA's IMM pays a mixing cost across 5 concurrent models. See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology and per-tracker detail.
+**Honest disclosure:** NX-MIMOSA wins all 7 scenarios. Closest competitor is Stone Soup KF-CA on Scenario 4 (Acceleration: 7.7m vs 4.9m). Stone Soup gets best-of-3 models per scenario (generous); NX-MIMOSA uses ONE fixed config for all. See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology and per-tracker detail.
 
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 

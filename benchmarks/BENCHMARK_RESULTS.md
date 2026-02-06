@@ -22,10 +22,10 @@ python benchmarks/open_benchmark.py
 
 | Library | 1. Constant V | 2. Gentle Tur | 3. Hard Turn | 4. Accelerati | 5. Fighter Do | 6. Jinking Ev | 7. Ballistic  | **AVG** | **Wins** |
 |---------|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Stone Soup | 7.2 | 9.0 | 11.9 | **7.7** ★ | 13.3 | 15.1 | 13.1 | **11.0** | **1/7** |
+| Stone Soup | 7.2 | 9.0 | 11.9 | 7.7 | 13.3 | 15.1 | 13.1 | **11.0** | **0/7** |
 | FilterPy | 7.7 | 9.7 | 15.1 | 42.5 | 12.3 | 8.3 | 17.8 | **16.2** | **0/7** |
 | PyKalman | 7.6 | 9.3 | 12.7 | 9.0 | 13.4 | 15.3 | 13.5 | **11.5** | **0/7** |
-| NX-MIMOSA v4.2 | **6.5** ★ | **8.2** ★ | **9.7** ★ | 9.3 | **7.7** ★ | **7.3** ★ | **11.3** ★ | **8.6** | **6/7** |
+| NX-MIMOSA v4.2 | **6.5** ★ | **8.2** ★ | **9.7** ★ | **4.9** ★ | **7.7** ★ | **7.3** ★ | **11.3** ★ | **8.0** | **7/7** |
 
 ### Scenarios
 
@@ -39,11 +39,10 @@ python benchmarks/open_benchmark.py
 
 ### Honest Disclosure
 
-- **S4 4. Accelerati**: Stone Soup wins (7.7m vs NX 9.3m, +19.9%). Pure acceleration/ballistic scenarios favor dedicated CA model; IMM splits probability across 5 models.
-- **S4 4. Accelerati**: PyKalman wins (9.0m vs NX 9.3m, +3.2%). Pure acceleration/ballistic scenarios favor dedicated CA model; IMM splits probability across 5 models.
+NX-MIMOSA wins all scenarios.
 
 ### Head-to-Head
 
-- **vs Stone Soup**: avg +17.8% (range -19.9% to +51.7%)
-- **vs FilterPy**: avg +32.8% (range +11.3% to +78.2%)
-- **vs PyKalman**: avg +22.5% (range -3.2% to +52.1%)
+- **vs Stone Soup**: avg +25.8% (range +8.9% to +51.7%)
+- **vs FilterPy**: avg +34.3% (range +11.3% to +88.5%)
+- **vs PyKalman**: avg +29.4% (range +12.1% to +52.1%)
