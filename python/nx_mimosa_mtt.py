@@ -737,10 +737,149 @@ def jpda_associate(tracks: List[TrackState], measurements: np.ndarray,
     return weighted_measurements, unassigned_tracks, unassigned_meas
 
 
+@dataclass
+class MHTHypothesis:
+    """[REQ-V50-MHT-01] A single global hypothesis in MHT.
+    
+    Each hypothesis represents one possible assignment of all measurements
+    to all tracks across the current scan.
+    """
+    assignments: Dict[int, int]      # track_idx → meas_idx (-1 = miss)
+    score: float                     # Log-likelihood of this hypothesis
+    unassigned_meas: List[int]       # Measurement indices not assigned to any track
+
+
+def mht_associate(tracks: List[TrackState], measurements: np.ndarray,
+                  gate_threshold: float = 16.0, p_detection: float = 0.9,
+                  max_hypotheses: int = 50, n_best: int = 5
+                  ) -> Tuple[Dict[int, np.ndarray], List[int], List[int]]:
+    """[REQ-V50-MHT-02] Multi-Hypothesis Tracking data association.
+    
+    Generates multiple global hypotheses for measurement-to-track assignment,
+    scores each by log-likelihood, and selects the best. Unlike GNN (single
+    best assignment) or JPDA (weighted average), MHT maintains alternative
+    explanations and selects the most likely.
+    
+    Implementation: K-best global hypotheses via ranked assignment enumeration
+    with Mahalanobis-based scoring.
+    
+    Reference: Reid, "An algorithm for tracking multiple targets," IEEE TAC, 1979
+               Blackman & Popoli, "Design and Analysis of Modern Tracking Systems," 1999
+    
+    Args:
+        tracks: Active track list
+        measurements: Mx3 measurement array
+        gate_threshold: Chi-squared gate for validation
+        p_detection: Probability of detection
+        max_hypotheses: Maximum hypotheses to generate before pruning
+        n_best: Number of top hypotheses to retain
+    
+    Returns:
+        Tuple: (best_assignments {track_idx: measurement_z},
+                unassigned_tracks, unassigned_measurements)
+    """
+    n_tracks = len(tracks)
+    n_meas = len(measurements)
+    
+    if n_tracks == 0 or n_meas == 0:
+        return {}, list(range(n_tracks)), list(range(n_meas))
+    
+    # Step 1: Compute gating and Mahalanobis distances
+    validation = np.zeros((n_tracks, n_meas), dtype=bool)
+    mahal_dist = np.full((n_tracks, n_meas), 1e9)
+    
+    for i, track in enumerate(tracks):
+        if track.status == TrackStatus.DELETED:
+            continue
+        for j in range(n_meas):
+            d2 = track.filter.mahalanobis_distance(measurements[j])
+            if d2 < gate_threshold:
+                validation[i, j] = True
+                mahal_dist[i, j] = d2
+    
+    # Step 2: Generate hypotheses via systematic enumeration
+    # Each hypothesis assigns each track to one measurement (or miss)
+    # Score = sum of log-likelihoods for each assignment
+    
+    hypotheses: List[MHTHypothesis] = []
+    
+    # Start with the "all tracks miss" hypothesis
+    miss_score = n_tracks * np.log(max(1.0 - p_detection, 1e-10))
+    hypotheses.append(MHTHypothesis(
+        assignments={i: -1 for i in range(n_tracks) 
+                     if tracks[i].status != TrackStatus.DELETED},
+        score=miss_score,
+        unassigned_meas=list(range(n_meas))
+    ))
+    
+    # Generate hypotheses by iterating tracks and branching
+    for i in range(n_tracks):
+        if tracks[i].status == TrackStatus.DELETED:
+            continue
+        
+        valid_j = np.where(validation[i])[0]
+        if len(valid_j) == 0:
+            continue
+        
+        new_hypotheses = []
+        for hyp in hypotheses:
+            # Branch: track i assigned to each valid measurement
+            assigned_meas_in_hyp = set(v for k, v in hyp.assignments.items() if v >= 0)
+            
+            for j in valid_j:
+                if j in assigned_meas_in_hyp:
+                    continue  # Measurement already taken in this hypothesis
+                
+                # Create new hypothesis: assign track i to measurement j
+                new_assign = dict(hyp.assignments)
+                new_assign[i] = j
+                
+                # Score delta: remove miss penalty, add detection + likelihood
+                delta = (-np.log(max(1.0 - p_detection, 1e-10))
+                         + np.log(max(p_detection, 1e-10))
+                         - 0.5 * mahal_dist[i, j])
+                
+                new_unassigned = [m for m in hyp.unassigned_meas if m != j]
+                
+                new_hypotheses.append(MHTHypothesis(
+                    assignments=new_assign,
+                    score=hyp.score + delta,
+                    unassigned_meas=new_unassigned
+                ))
+            
+            # Also keep the original (track i stays as miss)
+            new_hypotheses.append(hyp)
+        
+        # Prune: keep only top max_hypotheses
+        new_hypotheses.sort(key=lambda h: h.score, reverse=True)
+        hypotheses = new_hypotheses[:max_hypotheses]
+    
+    # Step 3: Select best hypothesis
+    hypotheses.sort(key=lambda h: h.score, reverse=True)
+    best = hypotheses[0]
+    
+    # Step 4: Extract assignments from best hypothesis
+    best_measurements = {}
+    for track_idx, meas_idx in best.assignments.items():
+        if meas_idx >= 0:
+            best_measurements[track_idx] = measurements[meas_idx, :3]
+    
+    assigned_tracks = set(best_measurements.keys())
+    assigned_meas = set(v for v in best.assignments.values() if v >= 0)
+    
+    unassigned_tracks = [i for i in range(n_tracks)
+                         if i not in assigned_tracks
+                         and tracks[i].status != TrackStatus.DELETED]
+    unassigned_meas = [j for j in range(n_meas) if j not in assigned_meas]
+    
+    return best_measurements, unassigned_tracks, unassigned_meas
+
+
 class AssociationMethod(Enum):
     """Data association algorithm selection."""
     GNN = "gnn"     # Global Nearest Neighbor — fast, simple
     JPDA = "jpda"   # Joint Probabilistic DA — better in clutter
+    MHT = "mht"     # Multi-Hypothesis Tracking — best in dense/ambiguous
 
 
 # ===== PERFORMANCE METRICS =====
@@ -1078,7 +1217,7 @@ class MultiTargetTracker:
         for track in active:
             track.filter.predict()
         
-        # 2. DATA ASSOCIATION (GNN or JPDA)
+        # 2. DATA ASSOCIATION (GNN, JPDA, or MHT)
         if self.association == AssociationMethod.JPDA:
             weighted_meas, unassigned_tracks, unassigned_meas = jpda_associate(
                 active, measurements, self.config.gate_threshold
@@ -1093,6 +1232,23 @@ class MultiTargetTracker:
             # 4a. MISS unassigned tracks
             for track_idx in unassigned_tracks:
                 self.track_manager.update_track_miss(active[track_idx])
+        
+        elif self.association == AssociationMethod.MHT:
+            # MHT: multi-hypothesis scoring → best assignment
+            best_meas, unassigned_tracks, unassigned_meas = mht_associate(
+                active, measurements, self.config.gate_threshold
+            )
+            
+            # 3c. UPDATE tracks with MHT best-hypothesis assignments
+            for track_idx, z_best in best_meas.items():
+                self.track_manager.update_track_hit(
+                    active[track_idx], z_best, timestamp
+                )
+            
+            # 4c. MISS unassigned tracks
+            for track_idx in unassigned_tracks:
+                self.track_manager.update_track_miss(active[track_idx])
+        
         else:
             # GNN (default)
             assignments, unassigned_tracks, unassigned_meas = gnn_associate(
