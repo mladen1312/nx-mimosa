@@ -15,7 +15,7 @@
 
 [![Accuracy: 8.6× better](https://img.shields.io/badge/Accuracy-8.6×%20better%20than%20Stone%20Soup-brightgreen)]()
 [![18/19 Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
-[![141 Tests](https://img.shields.io/badge/Tests-141%2F141%20PASS-brightgreen)]()
+[![160 Tests](https://img.shields.io/badge/Tests-160%2F160%20PASS-brightgreen)]()
 [![NumPy Only](https://img.shields.io/badge/Dependency-NumPy%20Only-blue)]()
 [![AGPL v3 / Commercial](https://img.shields.io/badge/License-AGPL%20v3%20%2F%20Commercial-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
@@ -502,7 +502,7 @@ NX-MIMOSA extends the IMM estimator (Blom & Bar-Shalom, 1988) with Adaptive Outp
 
 ```bibtex
 @software{nxmimosa2026,
-  author = {Mester, Mladen},
+  author = {Me\v{s}ter, Mladen},
   title = {NX-MIMOSA: Adaptive Multi-Sensor Multi-Target Tracker},
   year = {2026},
   publisher = {Nexellum d.o.o.},
