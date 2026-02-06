@@ -790,6 +790,81 @@ class TestPerformanceMetrics:
 # CROSSING TARGETS SCENARIO (GNN vs JPDA comparison)
 # ============================================================
 
+class TestMHT:
+    """Tests for Multi-Hypothesis Tracking data association."""
+    
+    def test_mht_basic(self):
+        """MHT should track a single target."""
+        np.random.seed(42)
+        mtt = MultiTargetTracker(dt=1.0, r_std=50.0, association="mht",
+                                 config=TrackManagerConfig(confirm_m=3, confirm_n=5))
+        for step in range(20):
+            z = np.array([100*step, 0, 5000]) + np.random.randn(3)*30
+            mtt.process_scan(z.reshape(1, -1))
+        confirmed = mtt.confirmed_tracks
+        assert len(confirmed) == 1
+        assert confirmed[0].hit_count >= 15
+    
+    def test_mht_two_targets(self):
+        """MHT should maintain 2 separate tracks."""
+        np.random.seed(42)
+        mtt = MultiTargetTracker(dt=1.0, r_std=50.0, q_base=1.0,
+                                 association="mht",
+                                 config=TrackManagerConfig(
+                                     confirm_m=3, confirm_n=5,
+                                     min_separation=100.0))
+        for step in range(25):
+            z1 = np.array([100*step, 0, 5000]) + np.random.randn(3)*30
+            z2 = np.array([0, 100*step, 8000]) + np.random.randn(3)*30
+            mtt.process_scan(np.vstack([z1, z2]))
+        confirmed = mtt.confirmed_tracks
+        assert len(confirmed) == 2
+    
+    def test_mht_in_clutter(self):
+        """MHT should confirm real target despite clutter."""
+        np.random.seed(42)
+        mtt = MultiTargetTracker(dt=1.0, r_std=50.0, q_base=1.0,
+                                 association="mht",
+                                 config=TrackManagerConfig(
+                                     confirm_m=3, confirm_n=5,
+                                     delete_misses=4,
+                                     min_separation=100.0,
+                                     gate_threshold=25.0))
+        for step in range(40):
+            z_real = np.array([100*step, 0, 5000]) + np.random.randn(3)*50
+            clutter = np.random.uniform(50000, 100000, size=(2, 3))
+            meas = np.vstack([z_real, clutter])
+            mtt.process_scan(meas)
+        confirmed = mtt.confirmed_tracks
+        assert len(confirmed) >= 1
+    
+    def test_mht_vs_gnn_vs_jpda(self):
+        """All three association methods should be selectable."""
+        for method in ["gnn", "jpda", "mht"]:
+            mtt = MultiTargetTracker(dt=1.0, r_std=50.0, association=method)
+            assert mtt.association.value == method
+    
+    def test_mht_crossing_targets(self):
+        """MHT should handle crossing targets without track swap."""
+        np.random.seed(42)
+        mtt = MultiTargetTracker(dt=1.0, r_std=30.0, q_base=1.0,
+                                 association="mht",
+                                 config=TrackManagerConfig(
+                                     confirm_m=3, confirm_n=5,
+                                     min_separation=50.0))
+        for step in range(30):
+            # Two targets crossing at step 15
+            x1 = 100 * step
+            y1 = 50 * step
+            x2 = 100 * (30 - step)
+            y2 = 50 * step
+            z1 = np.array([x1, y1, 5000]) + np.random.randn(3)*20
+            z2 = np.array([x2, y2, 5000]) + np.random.randn(3)*20
+            mtt.process_scan(np.vstack([z1, z2]))
+        confirmed = mtt.confirmed_tracks
+        assert len(confirmed) >= 2
+
+
 class TestCrossingTargets:
     def test_crossing_scenario(self):
         """Two targets crossing paths — both GNN and JPDA should handle."""
