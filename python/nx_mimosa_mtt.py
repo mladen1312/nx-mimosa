@@ -1453,3 +1453,392 @@ def compute_track_metrics(mtt: MultiTargetTracker,
         "n_truth": n_truth,
         "ospa": ospa,
     }
+
+
+# ===== SENSOR BIAS ESTIMATION =====
+
+@dataclass
+class SensorBias:
+    """[REQ-V51-BIAS-01] Estimated sensor bias state.
+    
+    Tracks systematic measurement errors in range, azimuth, and elevation.
+    """
+    range_bias: float = 0.0        # meters
+    azimuth_bias: float = 0.0      # radians
+    elevation_bias: float = 0.0    # radians
+    range_bias_std: float = 0.0    # uncertainty
+    azimuth_bias_std: float = 0.0
+    elevation_bias_std: float = 0.0
+    n_samples: int = 0
+
+
+class SensorBiasEstimator:
+    """[REQ-V51-BIAS-02] Online sensor bias estimation from track innovations.
+    
+    Estimates systematic range, azimuth, and elevation biases by analyzing
+    the mean innovation (residual) sequence from confirmed tracks. A properly
+    calibrated sensor should have zero-mean innovations — any persistent
+    offset indicates a bias.
+    
+    Uses exponentially-weighted moving average (EWMA) for online estimation
+    with configurable forgetting factor.
+    
+    Reference: Bar-Shalom, Li, Kirubarajan (2001), §6.6 "Sensor Registration"
+    
+    Args:
+        alpha: EWMA forgetting factor (0.01–0.1 typical). Smaller = slower, smoother.
+        min_samples: Minimum samples before bias estimate is considered valid.
+        bias_detect_sigma: Number of sigma for bias detection threshold.
+    """
+    
+    def __init__(self, alpha: float = 0.05, min_samples: int = 20,
+                 bias_detect_sigma: float = 3.0):
+        self.alpha = alpha
+        self.min_samples = min_samples
+        self.bias_detect_sigma = bias_detect_sigma
+        
+        # EWMA state
+        self._mean = np.zeros(3)  # [range, azimuth, elevation] bias estimate
+        self._var = np.zeros(3)   # Variance of estimates
+        self._n = 0
+        self._initialized = False
+    
+    def update(self, innovation: np.ndarray, S: np.ndarray) -> SensorBias:
+        """[REQ-V51-BIAS-03] Update bias estimate with new innovation.
+        
+        Args:
+            innovation: Measurement innovation vector (predicted - measured).
+                       Can be 2D [range_err, az_err] or 3D [range_err, az_err, el_err].
+            S: Innovation covariance matrix.
+        
+        Returns:
+            Current bias estimate.
+        """
+        # Pad to 3D if needed
+        inn = np.zeros(3)
+        inn[:len(innovation)] = innovation[:3] if len(innovation) >= 3 else innovation
+        
+        self._n += 1
+        
+        if not self._initialized:
+            self._mean = inn.copy()
+            diag_s = np.diag(S).copy()
+            self._var = np.zeros(3)
+            n = min(3, len(diag_s))
+            self._var[:n] = diag_s[:n]
+            self._initialized = True
+        else:
+            # EWMA update
+            delta = inn - self._mean
+            self._mean += self.alpha * delta
+            self._var = (1 - self.alpha) * (self._var + self.alpha * delta**2)
+        
+        return self.get_bias()
+    
+    def get_bias(self) -> SensorBias:
+        """[REQ-V51-BIAS-04] Get current bias estimate with uncertainty."""
+        std = np.sqrt(np.maximum(self._var, 1e-20))
+        return SensorBias(
+            range_bias=float(self._mean[0]),
+            azimuth_bias=float(self._mean[1]),
+            elevation_bias=float(self._mean[2]),
+            range_bias_std=float(std[0]),
+            azimuth_bias_std=float(std[1]),
+            elevation_bias_std=float(std[2]),
+            n_samples=self._n,
+        )
+    
+    def is_biased(self) -> Tuple[bool, List[str]]:
+        """[REQ-V51-BIAS-05] Test if sensor shows significant bias.
+        
+        Returns:
+            Tuple of (biased: bool, list of biased dimensions).
+        """
+        if self._n < self.min_samples:
+            return False, []
+        
+        std = np.sqrt(np.maximum(self._var, 1e-20))
+        dims = ["range", "azimuth", "elevation"]
+        biased = []
+        
+        for i, dim in enumerate(dims):
+            if abs(self._mean[i]) > self.bias_detect_sigma * std[i] / np.sqrt(self._n):
+                biased.append(dim)
+        
+        return len(biased) > 0, biased
+    
+    def correct_measurement(self, z: np.ndarray) -> np.ndarray:
+        """[REQ-V51-BIAS-06] Apply bias correction to a measurement.
+        
+        Args:
+            z: Raw measurement [range, azimuth, elevation] or [range, azimuth].
+        
+        Returns:
+            Bias-corrected measurement.
+        """
+        if self._n < self.min_samples:
+            return z.copy()
+        
+        corrected = z.copy()
+        corrected[0] -= self._mean[0]  # range
+        if len(corrected) > 1:
+            corrected[1] -= self._mean[1]  # azimuth
+        if len(corrected) > 2:
+            corrected[2] -= self._mean[2]  # elevation
+        
+        return corrected
+    
+    def reset(self) -> None:
+        """Reset estimator state."""
+        self._mean = np.zeros(3)
+        self._var = np.zeros(3)
+        self._n = 0
+        self._initialized = False
+
+
+# ===== OUT-OF-SEQUENCE MEASUREMENT HANDLING =====
+
+class OOSMHandler:
+    """[REQ-V51-OOSM-01] Out-of-Sequence Measurement handler.
+    
+    Handles measurements that arrive after newer ones have been processed.
+    Common in multi-sensor systems with different latencies, or network-based
+    tracking with variable transmission delays.
+    
+    Implements the one-step-lag OOSM algorithm (Bar-Shalom, 2002):
+    1. Retrodicts state back to OOSM timestamp
+    2. Updates with the late measurement
+    3. Re-predicts forward to current time
+    
+    Reference: Y. Bar-Shalom, "Update with out-of-sequence measurements in
+               tracking: exact solution," IEEE Trans. AES, 2002
+    
+    Args:
+        max_lag: Maximum acceptable lag in timesteps. Older measurements are discarded.
+    """
+    
+    def __init__(self, max_lag: int = 5):
+        self.max_lag = max_lag
+        # State history: list of (timestamp, x, P, F, Q) tuples
+        self._history: List[Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._max_history = max_lag + 2
+        self.stats = {"oosm_processed": 0, "oosm_rejected": 0}
+    
+    def save_state(self, timestamp: float, x: np.ndarray, P: np.ndarray,
+                   F: np.ndarray, Q: np.ndarray) -> None:
+        """[REQ-V51-OOSM-02] Save filter state for potential retrodiction.
+        
+        Call this after each normal (in-sequence) update.
+        
+        Args:
+            timestamp: Current time
+            x: State vector after update
+            P: Covariance after update
+            F: State transition matrix used
+            Q: Process noise matrix used
+        """
+        self._history.append((timestamp, x.copy(), P.copy(), F.copy(), Q.copy()))
+        
+        # Trim to max history
+        if len(self._history) > self._max_history:
+            self._history = self._history[-self._max_history:]
+    
+    def process_oosm(self, kf: 'KalmanFilter3D', z_oosm: np.ndarray,
+                     t_oosm: float, t_current: float,
+                     H: Optional[np.ndarray] = None,
+                     R: Optional[np.ndarray] = None) -> bool:
+        """[REQ-V51-OOSM-03] Process an out-of-sequence measurement.
+        
+        Retrodicts state to OOSM time, updates, and re-predicts to current time.
+        
+        Args:
+            kf: The KalmanFilter3D to update
+            z_oosm: The late measurement vector
+            t_oosm: Timestamp of the OOSM
+            t_current: Current timestamp
+            H: Measurement matrix (uses kf.H if None)
+            R: Measurement noise (uses kf.R if None)
+        
+        Returns:
+            True if OOSM was processed, False if rejected (too old).
+        """
+        if H is None:
+            H = kf.H
+        if R is None:
+            R = kf.R
+        
+        # Find bracketing state in history
+        # We need the state just before t_oosm
+        history_before = [(t, x, P, F, Q) for t, x, P, F, Q in self._history
+                         if t <= t_oosm]
+        
+        if not history_before:
+            # OOSM is older than our history — reject
+            self.stats["oosm_rejected"] += 1
+            return False
+        
+        # Get state just before OOSM time
+        t_before, x_before, P_before, F_before, Q_before = history_before[-1]
+        
+        # Check lag
+        steps_behind = sum(1 for t, _, _, _, _ in self._history if t > t_oosm)
+        if steps_behind > self.max_lag:
+            self.stats["oosm_rejected"] += 1
+            return False
+        
+        # Step 1: Predict from before-state to OOSM time
+        dt_to_oosm = t_oosm - t_before
+        if dt_to_oosm > 0:
+            x_retro = F_before @ x_before
+            P_retro = F_before @ P_before @ F_before.T + Q_before
+        else:
+            x_retro = x_before.copy()
+            P_retro = P_before.copy()
+        
+        # Step 2: Kalman update at OOSM time
+        y = z_oosm - H @ x_retro
+        S = H @ P_retro @ H.T + R
+        try:
+            S_inv = np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            self.stats["oosm_rejected"] += 1
+            return False
+        
+        K = P_retro @ H.T @ S_inv
+        x_updated = x_retro + K @ y
+        P_updated = (np.eye(len(x_retro)) - K @ H) @ P_retro
+        
+        # Step 3: Re-predict forward through all subsequent steps
+        x_fwd = x_updated
+        P_fwd = P_updated
+        
+        future_steps = [(t, x, P, F, Q) for t, x, P, F, Q in self._history
+                       if t > t_oosm]
+        
+        for t_step, _, _, F_step, Q_step in future_steps:
+            x_fwd = F_step @ x_fwd
+            P_fwd = F_step @ P_fwd @ F_step.T + Q_step
+        
+        # Step 4: Merge OOSM-corrected state with current state
+        # Use covariance intersection for robustness
+        P_curr_inv = np.linalg.inv(kf.P + np.eye(len(kf.P)) * 1e-10)
+        P_oosm_inv = np.linalg.inv(P_fwd + np.eye(len(P_fwd)) * 1e-10)
+        
+        P_merged_inv = P_curr_inv + P_oosm_inv
+        P_merged = np.linalg.inv(P_merged_inv)
+        x_merged = P_merged @ (P_curr_inv @ kf.x + P_oosm_inv @ x_fwd)
+        
+        # Apply to filter
+        kf.x = x_merged
+        kf.P = P_merged
+        
+        self.stats["oosm_processed"] += 1
+        return True
+    
+    def can_handle(self, t_oosm: float) -> bool:
+        """Check if an OOSM at given time can be processed."""
+        if not self._history:
+            return False
+        oldest_t = self._history[0][0]
+        return t_oosm >= oldest_t
+    
+    @property
+    def history_depth(self) -> int:
+        """Number of states in history."""
+        return len(self._history)
+
+
+# ===== DOPPLER INTEGRATION =====
+
+def make_cv3d_doppler_matrices(dt: float, q: float
+                                ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """[REQ-V51-DOP-01] CV3D with Doppler measurement model.
+    
+    Extends standard CV3D with range-rate (Doppler) as a measurement,
+    enabling direct velocity observability.
+    
+    State: [x, y, z, vx, vy, vz] (6-state)
+    Measurement: [x, y, z, vx_radial] (4-measurement with radial velocity)
+    
+    Args:
+        dt: Time step
+        q: Process noise intensity
+    
+    Returns:
+        Tuple of (F, Q, H_doppler) where H_doppler is the 4×6 measurement matrix
+        for [x, y, z, v_radial] observations.
+    """
+    F, Q = make_cv3d_matrices(dt, q)
+    
+    # Standard H for position + full velocity projected to radial
+    # H_doppler maps state to [x, y, z, vx] (simplified: radial ≈ vx for head-on)
+    # In practice, radial velocity = dot(v, unit_los) which depends on geometry
+    # Here we provide the template — user scales by LOS unit vector
+    H_doppler = np.zeros((4, 6))
+    H_doppler[0, 0] = 1.0  # x
+    H_doppler[1, 1] = 1.0  # y
+    H_doppler[2, 2] = 1.0  # z
+    H_doppler[3, 3] = 1.0  # vx (radial component — caller rotates to LOS)
+    
+    return F, Q, H_doppler
+
+
+def doppler_measurement_matrix(state: np.ndarray,
+                                sensor_pos: np.ndarray) -> np.ndarray:
+    """[REQ-V51-DOP-02] Compute Doppler H matrix for given geometry.
+    
+    The radial velocity measurement is v_r = dot(v, u_los) where u_los
+    is the unit vector from sensor to target.
+    
+    H = [I_3x3  0_3x3]  for position rows
+        [0 0 0  u_los]   for Doppler row
+    
+    Args:
+        state: [x, y, z, vx, vy, vz] target state
+        sensor_pos: [sx, sy, sz] sensor position
+    
+    Returns:
+        H: 4×6 measurement matrix for [x, y, z, v_radial]
+    """
+    pos = state[:3]
+    los = pos - sensor_pos
+    r = np.linalg.norm(los)
+    
+    if r < 1e-6:
+        u_los = np.array([1.0, 0.0, 0.0])
+    else:
+        u_los = los / r
+    
+    H = np.zeros((4, 6))
+    H[0, 0] = 1.0  # x
+    H[1, 1] = 1.0  # y
+    H[2, 2] = 1.0  # z
+    H[3, 3] = u_los[0]  # vx contribution to radial
+    H[3, 4] = u_los[1]  # vy contribution to radial
+    H[3, 5] = u_los[2]  # vz contribution to radial
+    
+    return H
+
+
+def compute_radial_velocity(state: np.ndarray,
+                             sensor_pos: np.ndarray) -> float:
+    """[REQ-V51-DOP-03] Compute expected radial velocity (Doppler).
+    
+    v_r = dot(velocity, unit_LOS)
+    
+    Args:
+        state: [x, y, z, vx, vy, vz]
+        sensor_pos: [sx, sy, sz]
+    
+    Returns:
+        Radial velocity in m/s (positive = receding)
+    """
+    pos = state[:3]
+    vel = state[3:6]
+    los = pos - sensor_pos
+    r = np.linalg.norm(los)
+    
+    if r < 1e-6:
+        return 0.0
+    
+    return float(np.dot(vel, los / r))
