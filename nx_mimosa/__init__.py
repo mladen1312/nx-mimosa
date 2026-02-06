@@ -13,7 +13,7 @@ Quick Start::
 Nexellum d.o.o. — Dr. Mladen Mešter — mladen@nexellum.com
 """
 
-__version__ = "5.3.0"
+__version__ = "5.5.0"
 __author__ = "Dr. Mladen Mešter"
 __email__ = "mladen@nexellum.com"
 __license__ = "AGPL-3.0-or-later"
@@ -59,6 +59,35 @@ from python.nx_mimosa_mtt import (
     TrackQualityReport,
 )
 
+# Intelligence (Platform ID, ECM, Intent)
+from python.nx_mimosa_intelligence import (
+    IntelligencePipeline,
+    PlatformClassifier,
+    ECMDetector,
+    IntentPredictor,
+    ThreatLevel,
+    ECMStatus,
+    IntentType,
+    PlatformClass,
+    ECMReport,
+    IntentReport,
+    IntelligenceReport,
+)
+
+# Multi-Sensor Fusion
+from python.nx_mimosa_fusion import (
+    MultiSensorFusionEngine,
+    SensorType,
+    SensorConfig,
+    SensorMeasurement,
+    SensorHealth,
+    make_radar_sensor,
+    make_doppler_radar_sensor,
+    make_eo_sensor,
+    make_adsb_sensor,
+    make_esm_sensor,
+)
+
 # Coordinate transforms
 from python.nx_mimosa_coords import (
     geodetic_to_ecef,
@@ -90,6 +119,14 @@ __all__ = [
     "make_cv3d_doppler_matrices", "doppler_measurement_matrix", "compute_radial_velocity",
     "t2ta_associate", "fuse_tracks", "T2TAPair",
     "assess_track_quality", "TrackQualityReport",
+    # Intelligence
+    "IntelligencePipeline", "PlatformClassifier", "ECMDetector", "IntentPredictor",
+    "ThreatLevel", "ECMStatus", "IntentType", "PlatformClass",
+    "ECMReport", "IntentReport", "IntelligenceReport",
+    # Fusion
+    "MultiSensorFusionEngine", "SensorType", "SensorConfig", "SensorMeasurement",
+    "SensorHealth", "make_radar_sensor", "make_doppler_radar_sensor",
+    "make_eo_sensor", "make_adsb_sensor", "make_esm_sensor",
     # Coords
     "geodetic_to_ecef", "ecef_to_geodetic", "ecef_to_enu", "enu_to_ecef",
     "geodetic_to_enu", "enu_to_geodetic",
