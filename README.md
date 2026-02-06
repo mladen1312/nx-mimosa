@@ -502,7 +502,7 @@ NX-MIMOSA extends the IMM estimator (Blom & Bar-Shalom, 1988) with Adaptive Outp
 
 ```bibtex
 @software{nxmimosa2026,
-  author = {Me\v{s}ter, Mladen},
+  author = {Mester, Mladen},
   title = {NX-MIMOSA: Adaptive Multi-Sensor Multi-Target Tracker},
   year = {2026},
   publisher = {Nexellum d.o.o.},
