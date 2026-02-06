@@ -15,7 +15,7 @@
 
 [![Accuracy: 8.6× better](https://img.shields.io/badge/Accuracy-8.6×%20better%20than%20Stone%20Soup-brightgreen)]()
 [![18/19 Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
-[![284 Tests](https://img.shields.io/badge/Tests-284%2F284%20PASS-brightgreen)]()
+[![293 Tests](https://img.shields.io/badge/Tests-293%2F293%20PASS-brightgreen)]()
 [![Real Data](https://img.shields.io/badge/Real%20Data-210%20Aircraft%20Validated-orange)]()
 [![NumPy Only](https://img.shields.io/badge/Dependency-NumPy%20Only-blue)]()
 [![AGPL v3 / Commercial](https://img.shields.io/badge/License-AGPL%20v3%20%2F%20Commercial-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)

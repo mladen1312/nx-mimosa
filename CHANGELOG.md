@@ -1,6 +1,6 @@
 # NX-MIMOSA Changelog
 
-## v5.7.1 — "REAL DATA" (2026-02-06)
+## v5.8.0 — "REAL DATA" (2026-02-06)
 
 ### 🎯 Headline: First Real-Data Validation — 210 Live Aircraft from OpenSky Network
 

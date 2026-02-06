@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nx-mimosa"
-version = "5.7.1"
+version = "5.8.0"
 description = "Production-ready multi-sensor multi-target radar tracker with platform identification, ECM detection, and intent prediction"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
