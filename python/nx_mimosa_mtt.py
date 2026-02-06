@@ -1,0 +1,1299 @@
+"""
+NX-MIMOSA Multi-Target Tracker (MTT) v5.0
+==========================================
+[REQ-V50-MTT] Full 3D multi-target tracking with GNN data association
+and track lifecycle management.
+
+Architecture:
+  MTT Engine
+    ├── Track Table (managed list of Track objects)
+    ├── GNN Data Association (Munkres/Hungarian algorithm)
+    ├── Track Management (init/confirm/delete with M-of-N logic)
+    ├── 3D Motion Models (CV3D, CA3D, CT3D)
+    └── IMM Bank per track (wraps NxMimosaV40Sentinel)
+
+Each track is an independent NxMimosaV40Sentinel instance operating in 3D,
+managed by the MTT engine for data association and lifecycle.
+
+References:
+  - Bar-Shalom, Li (1995) — "Multitarget-Multisensor Tracking"
+  - Blackman, Popoli (1999) — "Design and Analysis of Modern Tracking Systems"
+  - Munkres (1957) — "Algorithms for Assignment Problems"
+  - Kuhn (1955) — "The Hungarian Method"
+
+Author: Dr. Mladen Mešter, Nexellum d.o.o.
+"""
+
+import numpy as np
+from typing import List, Dict, Optional, Tuple, Any
+from dataclasses import dataclass, field
+from enum import Enum, auto
+import time
+
+
+# ===== 3D MOTION MODELS =====
+
+class MotionModel3D(Enum):
+    CV3D = "cv3d"       # Constant Velocity 3D (6 states)
+    CA3D = "ca3d"       # Constant Acceleration 3D (9 states)
+    CT3D = "ct3d"       # Coordinated Turn 3D (7 states: +omega)
+
+
+def make_cv3d_matrices(dt: float, q: float) -> Tuple[np.ndarray, np.ndarray]:
+    """[REQ-V50-3D-01] Constant Velocity 3D: state = [x, y, z, vx, vy, vz].
+    
+    Returns:
+        F (6×6), Q (6×6)
+    """
+    F = np.eye(6)
+    F[0, 3] = dt
+    F[1, 4] = dt
+    F[2, 5] = dt
+    
+    # Discrete white noise acceleration model
+    dt2 = dt**2 / 2
+    G = np.array([
+        [dt2, 0, 0],
+        [0, dt2, 0],
+        [0, 0, dt2],
+        [dt, 0, 0],
+        [0, dt, 0],
+        [0, 0, dt],
+    ])
+    Q = G @ (q * np.eye(3)) @ G.T
+    
+    return F, Q
+
+
+def make_ca3d_matrices(dt: float, q: float) -> Tuple[np.ndarray, np.ndarray]:
+    """[REQ-V50-3D-02] Constant Acceleration 3D: state = [x, y, z, vx, vy, vz, ax, ay, az].
+    
+    Returns:
+        F (9×9), Q (9×9)
+    """
+    dt2 = dt**2 / 2
+    F = np.eye(9)
+    # Position from velocity
+    F[0, 3] = dt; F[1, 4] = dt; F[2, 5] = dt
+    # Position from acceleration
+    F[0, 6] = dt2; F[1, 7] = dt2; F[2, 8] = dt2
+    # Velocity from acceleration
+    F[3, 6] = dt; F[4, 7] = dt; F[5, 8] = dt
+    
+    dt3 = dt**3 / 6
+    G = np.array([
+        [dt3, 0, 0], [0, dt3, 0], [0, 0, dt3],
+        [dt2, 0, 0], [0, dt2, 0], [0, 0, dt2],
+        [dt, 0, 0],  [0, dt, 0],  [0, 0, dt],
+    ])
+    Q = G @ (q * np.eye(3)) @ G.T
+    
+    return F, Q
+
+
+def make_ct3d_matrices(dt: float, q: float, omega: float) -> Tuple[np.ndarray, np.ndarray]:
+    """[REQ-V50-3D-03] Coordinated Turn 3D: state = [x, y, z, vx, vy, vz, omega].
+    
+    Horizontal coordinated turn with constant altitude rate.
+    
+    Returns:
+        F (7×7), Q (7×7)
+    """
+    F = np.eye(7)
+    
+    if abs(omega) < 1e-6:
+        # Degenerate to CV for very small turn rate
+        F[0, 3] = dt
+        F[1, 4] = dt
+    else:
+        sin_wt = np.sin(omega * dt)
+        cos_wt = np.cos(omega * dt)
+        F[0, 3] = sin_wt / omega
+        F[0, 4] = -(1 - cos_wt) / omega
+        F[1, 3] = (1 - cos_wt) / omega
+        F[1, 4] = sin_wt / omega
+        F[3, 3] = cos_wt
+        F[3, 4] = -sin_wt
+        F[4, 3] = sin_wt
+        F[4, 4] = cos_wt
+    
+    F[2, 5] = dt  # Altitude: z += vz * dt
+    
+    # Process noise
+    dt2 = dt**2 / 2
+    Q = np.zeros((7, 7))
+    # Position noise
+    Q[0, 0] = Q[1, 1] = q * dt**4 / 4
+    Q[2, 2] = q * dt**4 / 4
+    # Velocity noise
+    Q[3, 3] = Q[4, 4] = q * dt**2
+    Q[5, 5] = q * dt**2
+    # Cross terms
+    Q[0, 3] = Q[3, 0] = q * dt**3 / 2
+    Q[1, 4] = Q[4, 1] = q * dt**3 / 2
+    Q[2, 5] = Q[5, 2] = q * dt**3 / 2
+    # Omega noise (small)
+    Q[6, 6] = q * 0.01 * dt
+    
+    return F, Q
+
+
+# ===== 3D KALMAN FILTER =====
+
+class KalmanFilter3D:
+    """[REQ-V50-3D-04] Standard 3D Kalman filter for multi-target tracking.
+    
+    Generic KF that works with any state dimension / motion model.
+    """
+    
+    def __init__(self, nx: int, nz: int):
+        self.nx = nx  # State dimension
+        self.nz = nz  # Measurement dimension
+        self.x = np.zeros(nx)
+        self.P = np.eye(nx) * 1000.0
+        self.F = np.eye(nx)
+        self.Q = np.eye(nx)
+        self.H = np.zeros((nz, nx))
+        self.R = np.eye(nz)
+        
+        # Set default H for position-only measurement
+        for i in range(min(nz, nx)):
+            self.H[i, i] = 1.0
+    
+    def predict(self, F: Optional[np.ndarray] = None, Q: Optional[np.ndarray] = None):
+        """Predict step."""
+        if F is not None:
+            self.F = F
+        if Q is not None:
+            self.Q = Q
+        
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+    
+    def update(self, z: np.ndarray, H: Optional[np.ndarray] = None,
+               R: Optional[np.ndarray] = None) -> float:
+        """Update step. Returns NIS (Normalized Innovation Squared)."""
+        if H is not None:
+            self.H = H
+        if R is not None:
+            self.R = R
+        
+        # Innovation
+        y = z - self.H @ self.x
+        S = self.H @ self.P @ self.H.T + self.R
+        
+        # NIS
+        try:
+            S_inv = np.linalg.inv(S)
+            nis = float(y.T @ S_inv @ y)
+        except np.linalg.LinAlgError:
+            nis = 1e6
+            S_inv = np.eye(len(S)) * 1e-6
+        
+        # Kalman gain
+        K = self.P @ self.H.T @ S_inv
+        
+        # State update
+        self.x = self.x + K @ y
+        I_KH = np.eye(self.nx) - K @ self.H
+        self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T  # Joseph form
+        
+        return nis
+    
+    def innovation_covariance(self, H: Optional[np.ndarray] = None,
+                               R: Optional[np.ndarray] = None) -> np.ndarray:
+        """Get S = HPH' + R for gating."""
+        _H = H if H is not None else self.H
+        _R = R if R is not None else self.R
+        return _H @ self.P @ _H.T + _R
+    
+    def mahalanobis_distance(self, z: np.ndarray, H: Optional[np.ndarray] = None,
+                              R: Optional[np.ndarray] = None) -> float:
+        """Mahalanobis distance of measurement from predicted."""
+        _H = H if H is not None else self.H
+        _R = R if R is not None else self.R
+        
+        y = z - _H @ self.x
+        S = _H @ self.P @ _H.T + _R
+        
+        try:
+            S_inv = np.linalg.inv(S)
+            return float(y.T @ S_inv @ y)
+        except np.linalg.LinAlgError:
+            return 1e6
+    
+    @property
+    def position(self) -> np.ndarray:
+        """Extract position from state (first 3 elements)."""
+        return self.x[:3].copy()
+    
+    @property
+    def velocity(self) -> np.ndarray:
+        """Extract velocity from state (elements 3:6)."""
+        return self.x[3:6].copy() if self.nx >= 6 else np.zeros(3)
+
+
+# ===== 3D IMM FILTER =====
+
+class IMM3D:
+    """[REQ-V50-3D-05] Interacting Multiple Model filter in 3D.
+    
+    Manages multiple KF3D filters with model mixing.
+    Default: CV3D + CA3D + CT3D (±ω)
+    """
+    
+    def __init__(self, dt: float, q_base: float = 1.0,
+                 models: Optional[List[str]] = None,
+                 r_std: float = 50.0):
+        self.dt = dt
+        self.q_base = q_base
+        self.r_std = r_std
+        self.nz = 3  # Default: [x, y, z] measurements
+        
+        if models is None:
+            models = ["cv3d", "ca3d", "ct3d_plus", "ct3d_minus"]
+        
+        self.model_names = models
+        self.n_models = len(models)
+        
+        # Create filters
+        self.filters: List[KalmanFilter3D] = []
+        self._model_configs = []
+        
+        for m in models:
+            if m == "cv3d":
+                kf = KalmanFilter3D(nx=6, nz=3)
+                self._model_configs.append(("cv3d", 6))
+            elif m == "ca3d":
+                kf = KalmanFilter3D(nx=9, nz=3)
+                self._model_configs.append(("ca3d", 9))
+            elif m.startswith("ct3d"):
+                kf = KalmanFilter3D(nx=7, nz=3)
+                self._model_configs.append(("ct3d", 7))
+            else:
+                kf = KalmanFilter3D(nx=6, nz=3)
+                self._model_configs.append(("cv3d", 6))
+            
+            kf.R = np.eye(3) * r_std**2
+            self.filters.append(kf)
+        
+        # Model probabilities
+        self.mu = np.ones(self.n_models) / self.n_models
+        
+        # Transition probability matrix (favor staying in current mode)
+        p_stay = 0.90
+        p_switch = (1 - p_stay) / (self.n_models - 1) if self.n_models > 1 else 0
+        self.TPM = np.full((self.n_models, self.n_models), p_switch)
+        np.fill_diagonal(self.TPM, p_stay)
+        
+        self._step = 0
+    
+    def initialize(self, z: np.ndarray):
+        """Initialize all filters with first measurement [x, y, z]."""
+        for i, kf in enumerate(self.filters):
+            kf.x[:3] = z[:3]
+            nx = kf.nx
+            kf.P = np.eye(nx) * self.r_std**2
+            # Velocity uncertainty higher
+            if nx >= 6:
+                kf.P[3, 3] = kf.P[4, 4] = kf.P[5, 5] = (self.r_std * 10)**2
+            if nx >= 7:
+                kf.P[6, 6] = 0.01  # Omega uncertainty
+            if nx >= 9:
+                kf.P[6, 6] = kf.P[7, 7] = kf.P[8, 8] = (self.r_std * 20)**2
+    
+    def predict(self):
+        """IMM predict: mix → predict each filter."""
+        # Mixing probabilities
+        c_bar = self.TPM.T @ self.mu
+        c_bar = np.maximum(c_bar, 1e-30)
+        
+        mu_mix = np.zeros((self.n_models, self.n_models))
+        for i in range(self.n_models):
+            for j in range(self.n_models):
+                mu_mix[i, j] = self.TPM[i, j] * self.mu[i] / c_bar[j]
+        
+        # Mix states (within same-dimension models)
+        mixed_x = []
+        mixed_P = []
+        for j in range(self.n_models):
+            nx_j = self.filters[j].nx
+            x_mix = np.zeros(nx_j)
+            
+            for i in range(self.n_models):
+                nx_i = self.filters[i].nx
+                n_common = min(nx_i, nx_j)
+                x_mix[:n_common] += mu_mix[i, j] * self.filters[i].x[:n_common]
+            
+            P_mix = np.zeros((nx_j, nx_j))
+            for i in range(self.n_models):
+                nx_i = self.filters[i].nx
+                n_common = min(nx_i, nx_j)
+                dx = np.zeros(nx_j)
+                dx[:n_common] = self.filters[i].x[:n_common] - x_mix[:n_common]
+                P_i = np.zeros((nx_j, nx_j))
+                P_i[:n_common, :n_common] = self.filters[i].P[:n_common, :n_common]
+                P_mix += mu_mix[i, j] * (P_i + np.outer(dx, dx))
+            
+            mixed_x.append(x_mix)
+            mixed_P.append(P_mix)
+        
+        # Apply mixed states and predict
+        for j, kf in enumerate(self.filters):
+            kf.x = mixed_x[j]
+            kf.P = mixed_P[j]
+            
+            model_type, nx = self._model_configs[j]
+            if model_type == "cv3d":
+                F, Q = make_cv3d_matrices(self.dt, self.q_base)
+            elif model_type == "ca3d":
+                F, Q = make_ca3d_matrices(self.dt, self.q_base * 0.5)
+            elif model_type == "ct3d":
+                omega = kf.x[6] if nx >= 7 else 0.0
+                if "minus" in self.model_names[j]:
+                    omega = -abs(omega) if abs(omega) > 0.001 else -0.05
+                elif "plus" in self.model_names[j]:
+                    omega = abs(omega) if abs(omega) > 0.001 else 0.05
+                F, Q = make_ct3d_matrices(self.dt, self.q_base, omega)
+            else:
+                F, Q = make_cv3d_matrices(self.dt, self.q_base)
+            
+            kf.predict(F, Q)
+        
+        self._step += 1
+    
+    def update(self, z: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """IMM update: update each filter → combine.
+        
+        Args:
+            z: Measurement [x, y, z] (3D Cartesian in tracking frame)
+        
+        Returns:
+            Tuple: (combined_state, combined_covariance)
+        """
+        # Update each filter and compute likelihoods
+        likelihoods = np.zeros(self.n_models)
+        
+        for j, kf in enumerate(self.filters):
+            # Build H matrix based on model dimension
+            H = np.zeros((3, kf.nx))
+            H[0, 0] = 1.0  # x
+            H[1, 1] = 1.0  # y
+            H[2, 2] = 1.0  # z
+            
+            # Innovation covariance for likelihood
+            S = kf.innovation_covariance(H, kf.R)
+            y = z - H @ kf.x
+            
+            try:
+                S_inv = np.linalg.inv(S)
+                det_S = np.linalg.det(S)
+                if det_S > 0:
+                    likelihoods[j] = np.exp(-0.5 * y.T @ S_inv @ y) / \
+                                     np.sqrt((2 * np.pi)**3 * det_S)
+                else:
+                    likelihoods[j] = 1e-30
+            except np.linalg.LinAlgError:
+                likelihoods[j] = 1e-30
+            
+            kf.update(z, H)
+        
+        # Update model probabilities
+        c_bar = self.TPM.T @ self.mu
+        mu_new = likelihoods * c_bar
+        total = np.sum(mu_new)
+        if total > 0:
+            self.mu = mu_new / total
+        else:
+            self.mu = np.ones(self.n_models) / self.n_models
+        
+        return self.combined_state()
+    
+    def combined_state(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Get probability-weighted combined state estimate.
+        
+        Returns 6-element state [x, y, z, vx, vy, vz] and 6×6 covariance.
+        """
+        x_comb = np.zeros(6)
+        for j, kf in enumerate(self.filters):
+            x_comb += self.mu[j] * kf.x[:6]
+        
+        P_comb = np.zeros((6, 6))
+        for j, kf in enumerate(self.filters):
+            dx = kf.x[:6] - x_comb
+            P_j = kf.P[:6, :6]
+            P_comb += self.mu[j] * (P_j + np.outer(dx, dx))
+        
+        return x_comb, P_comb
+    
+    @property
+    def position(self) -> np.ndarray:
+        x, _ = self.combined_state()
+        return x[:3]
+    
+    @property
+    def velocity(self) -> np.ndarray:
+        x, _ = self.combined_state()
+        return x[3:6]
+    
+    def mahalanobis_distance(self, z: np.ndarray) -> float:
+        """Combined Mahalanobis distance for gating."""
+        x, P = self.combined_state()
+        y = z[:3] - x[:3]
+        S = P[:3, :3] + np.eye(3) * self.r_std**2
+        try:
+            return float(y.T @ np.linalg.inv(S) @ y)
+        except np.linalg.LinAlgError:
+            return 1e6
+
+
+# ===== TRACK STATUS =====
+
+class TrackStatus(Enum):
+    TENTATIVE = auto()
+    CONFIRMED = auto()
+    COASTING = auto()
+    DELETED = auto()
+
+
+@dataclass
+class TrackState:
+    """[REQ-V50-TM-01] Track lifecycle state."""
+    track_id: int
+    status: TrackStatus = TrackStatus.TENTATIVE
+    filter: Optional[IMM3D] = None
+    
+    # Track management counters
+    hit_count: int = 0          # Total measurement associations
+    miss_count: int = 0         # Consecutive misses
+    total_updates: int = 0      # Total update opportunities
+    age: int = 0                # Steps since creation
+    
+    # M-of-N confirmation logic
+    history: list = field(default_factory=list)  # Recent hit/miss history
+    
+    # Metadata
+    creation_time: float = 0.0
+    last_update_time: float = 0.0
+    score: float = 0.0          # Log-likelihood ratio
+    
+    # Performance tracking
+    avg_nis: float = 0.0
+    nis_window: list = field(default_factory=list)
+    
+    def __repr__(self):
+        return (f"Track({self.track_id}, {self.status.name}, "
+                f"hits={self.hit_count}, misses={self.miss_count}, "
+                f"age={self.age})")
+
+
+# ===== GNN DATA ASSOCIATION =====
+
+def hungarian_algorithm(cost_matrix: np.ndarray) -> List[Tuple[int, int]]:
+    """[REQ-V50-GNN-01] Munkres/Hungarian algorithm for optimal assignment.
+    
+    Solves the linear assignment problem: minimize total cost of 
+    one-to-one assignment of rows (tracks) to columns (measurements).
+    
+    Args:
+        cost_matrix: N×M cost matrix (N tracks, M measurements)
+    
+    Returns:
+        List of (row, col) assignments
+    """
+    cost = cost_matrix.copy()
+    n_rows, n_cols = cost.shape
+    
+    # Pad to square if needed
+    n = max(n_rows, n_cols)
+    if n_rows != n_cols:
+        padded = np.full((n, n), 1e9)
+        padded[:n_rows, :n_cols] = cost
+        cost = padded
+    
+    # Step 1: Row reduction
+    for i in range(n):
+        cost[i] -= cost[i].min()
+    
+    # Step 2: Column reduction
+    for j in range(n):
+        cost[:, j] -= cost[:, j].min()
+    
+    # Hungarian algorithm with augmenting paths
+    row_assign = np.full(n, -1, dtype=int)
+    col_assign = np.full(n, -1, dtype=int)
+    
+    for _ in range(n * 2):  # Max iterations
+        # Find uncovered zeros and try to assign
+        row_covered = np.zeros(n, dtype=bool)
+        col_covered = np.zeros(n, dtype=bool)
+        
+        # Greedy initial assignment
+        row_assign[:] = -1
+        col_assign[:] = -1
+        for i in range(n):
+            for j in range(n):
+                if cost[i, j] < 1e-10 and col_assign[j] == -1:
+                    row_assign[i] = j
+                    col_assign[j] = i
+                    break
+        
+        # Check if complete
+        n_assigned = np.sum(row_assign >= 0)
+        if n_assigned >= n:
+            break
+        
+        # Cover columns with assignments
+        col_covered[:] = False
+        for j in range(n):
+            if col_assign[j] >= 0:
+                col_covered[j] = True
+        
+        if np.sum(col_covered) >= n:
+            break
+        
+        # Find minimum uncovered value
+        row_covered[:] = False
+        for i in range(n):
+            if row_assign[i] >= 0:
+                row_covered[i] = True
+        
+        min_val = 1e9
+        for i in range(n):
+            if not row_covered[i]:
+                for j in range(n):
+                    if not col_covered[j]:
+                        min_val = min(min_val, cost[i, j])
+        
+        if min_val >= 1e8:
+            break
+        
+        # Adjust matrix
+        for i in range(n):
+            for j in range(n):
+                if not row_covered[i] and not col_covered[j]:
+                    cost[i, j] -= min_val
+                elif row_covered[i] and col_covered[j]:
+                    cost[i, j] += min_val
+    
+    # Extract valid assignments (within original matrix bounds)
+    assignments = []
+    for i in range(n_rows):
+        j = row_assign[i]
+        if j >= 0 and j < n_cols and cost_matrix[i, j] < 1e8:
+            assignments.append((i, j))
+    
+    return assignments
+
+
+def gnn_associate(tracks: List[TrackState], measurements: np.ndarray,
+                  gate_threshold: float = 16.0) -> Tuple[List[Tuple[int, int]], 
+                                                           List[int], List[int]]:
+    """[REQ-V50-GNN-02] Global Nearest Neighbor data association.
+    
+    Args:
+        tracks: List of active tracks
+        measurements: Mx3 array of [x, y, z] measurements
+        gate_threshold: Chi-squared gate (16.0 ≈ 99.7% for 3DOF)
+    
+    Returns:
+        Tuple: (assignments [(track_idx, meas_idx)], 
+                unassigned_tracks [track_idx],
+                unassigned_measurements [meas_idx])
+    """
+    n_tracks = len(tracks)
+    n_meas = len(measurements)
+    
+    if n_tracks == 0 or n_meas == 0:
+        return [], list(range(n_tracks)), list(range(n_meas))
+    
+    # Build cost matrix (Mahalanobis distances)
+    cost = np.full((n_tracks, n_meas), 1e9)
+    
+    for i, track in enumerate(tracks):
+        if track.status == TrackStatus.DELETED:
+            continue
+        for j in range(n_meas):
+            d2 = track.filter.mahalanobis_distance(measurements[j])
+            if d2 < gate_threshold:
+                cost[i, j] = d2
+    
+    # Solve assignment
+    raw_assignments = hungarian_algorithm(cost)
+    
+    # Filter by gate
+    assignments = []
+    assigned_tracks = set()
+    assigned_meas = set()
+    
+    for ti, mi in raw_assignments:
+        if cost[ti, mi] < gate_threshold:
+            assignments.append((ti, mi))
+            assigned_tracks.add(ti)
+            assigned_meas.add(mi)
+    
+    unassigned_tracks = [i for i in range(n_tracks) 
+                         if i not in assigned_tracks 
+                         and tracks[i].status != TrackStatus.DELETED]
+    unassigned_meas = [j for j in range(n_meas) if j not in assigned_meas]
+    
+    return assignments, unassigned_tracks, unassigned_meas
+
+
+# ===== JPDA DATA ASSOCIATION =====
+
+def jpda_associate(tracks: List[TrackState], measurements: np.ndarray,
+                   gate_threshold: float = 16.0, p_detection: float = 0.9,
+                   clutter_density: float = 1e-6
+                   ) -> Tuple[Dict[int, np.ndarray], List[int], List[int]]:
+    """[REQ-V50-JPDA-01] Joint Probabilistic Data Association.
+    
+    Uses Mahalanobis-based relative likelihood for robust operation
+    across all covariance scales (new tracks with large P, established
+    tracks with small P).
+    
+    Reference: Bar-Shalom & Fortmann, "Tracking and Data Association" (1988)
+    """
+    n_tracks = len(tracks)
+    n_meas = len(measurements)
+    
+    if n_tracks == 0 or n_meas == 0:
+        return {}, list(range(n_tracks)), list(range(n_meas))
+    
+    # Step 1: Validation matrix and Mahalanobis distances
+    validation = np.zeros((n_tracks, n_meas), dtype=bool)
+    mahal_dist = np.full((n_tracks, n_meas), 1e9)
+    
+    for i, track in enumerate(tracks):
+        if track.status == TrackStatus.DELETED:
+            continue
+        for j in range(n_meas):
+            d2 = track.filter.mahalanobis_distance(measurements[j])
+            if d2 < gate_threshold:
+                validation[i, j] = True
+                mahal_dist[i, j] = d2
+    
+    # Step 2: Compute association probabilities using Mahalanobis distance
+    # beta_{i,j} proportional to Pd * exp(-0.5 * d^2)
+    # beta_{i,0} proportional to (1 - Pd)
+    beta = np.zeros((n_tracks, n_meas + 1))
+    
+    for i in range(n_tracks):
+        if tracks[i].status == TrackStatus.DELETED:
+            beta[i, 0] = 1.0
+            continue
+        
+        valid_j = np.where(validation[i])[0]
+        if len(valid_j) == 0:
+            beta[i, 0] = 1.0
+            continue
+        
+        raw_probs = np.zeros(n_meas + 1)
+        raw_probs[0] = 1.0 - p_detection  # Miss
+        
+        for j in valid_j:
+            sharing = 1.0 / max(1, np.sum(validation[:, j]))
+            raw_probs[j + 1] = p_detection * np.exp(-0.5 * mahal_dist[i, j]) * sharing
+        
+        total = raw_probs.sum()
+        if total > 0:
+            beta[i] = raw_probs / total
+        else:
+            beta[i, 0] = 1.0
+    
+    # Step 3: Weighted measurement per track
+    weighted_measurements = {}
+    
+    for i, track in enumerate(tracks):
+        if track.status == TrackStatus.DELETED:
+            continue
+        valid_j = np.where(validation[i])[0]
+        if len(valid_j) == 0:
+            continue
+        
+        p_assoc = sum(beta[i, j + 1] for j in valid_j)
+        if p_assoc < 0.01:
+            continue
+        
+        z_combined = np.zeros(3)
+        for j in valid_j:
+            z_combined += beta[i, j + 1] * measurements[j, :3]
+        z_combined /= p_assoc
+        weighted_measurements[i] = z_combined
+    
+    # Identify unassigned
+    assigned_tracks = set(weighted_measurements.keys())
+    assigned_meas = set()
+    for i in weighted_measurements:
+        for j in range(n_meas):
+            if validation[i, j] and beta[i, j + 1] > 0.01:
+                assigned_meas.add(j)
+    
+    unassigned_tracks = [i for i in range(n_tracks) 
+                         if i not in assigned_tracks
+                         and tracks[i].status != TrackStatus.DELETED]
+    unassigned_meas = [j for j in range(n_meas) if j not in assigned_meas]
+    
+    return weighted_measurements, unassigned_tracks, unassigned_meas
+
+
+class AssociationMethod(Enum):
+    """Data association algorithm selection."""
+    GNN = "gnn"     # Global Nearest Neighbor — fast, simple
+    JPDA = "jpda"   # Joint Probabilistic DA — better in clutter
+
+
+# ===== PERFORMANCE METRICS =====
+
+def compute_nees(x_true: np.ndarray, x_est: np.ndarray,
+                 P: np.ndarray) -> float:
+    """[REQ-V50-MET-03] Normalized Estimation Error Squared.
+    
+    NEES = (x_true - x_est)^T P^{-1} (x_true - x_est)
+    For consistent filter: E[NEES] = nx (state dimension)
+    
+    Reference: Bar-Shalom, Li, Kirubarajan (2001), §5.4
+    """
+    dx = x_true - x_est
+    try:
+        return float(dx.T @ np.linalg.inv(P) @ dx)
+    except np.linalg.LinAlgError:
+        return float('inf')
+
+
+def compute_nis(innovation: np.ndarray, S: np.ndarray) -> float:
+    """[REQ-V50-MET-04] Normalized Innovation Squared.
+    
+    NIS = y^T S^{-1} y where y is innovation, S is innovation covariance.
+    For consistent filter: E[NIS] = nz (measurement dimension)
+    """
+    try:
+        return float(innovation.T @ np.linalg.inv(S) @ innovation)
+    except np.linalg.LinAlgError:
+        return float('inf')
+
+
+def compute_siap_metrics(track_positions: Dict[int, np.ndarray],
+                         truth_positions: Dict[int, np.ndarray],
+                         threshold: float = 500.0) -> Dict[str, float]:
+    """[REQ-V50-MET-05] NATO SIAP track quality metrics.
+    
+    Single Integrated Air Picture standard metrics.
+    
+    Returns:
+        Dict with completeness, ambiguity, spuriousness, track_accuracy
+    """
+    n_truth = len(truth_positions)
+    n_tracks = len(track_positions)
+    
+    if n_truth == 0 and n_tracks == 0:
+        return {"completeness": 1.0, "ambiguity": 0.0, 
+                "spuriousness": 0.0, "accuracy": 0.0}
+    
+    if n_truth == 0:
+        return {"completeness": 0.0, "ambiguity": 0.0,
+                "spuriousness": 1.0, "accuracy": float('inf')}
+    
+    t_pos = list(track_positions.values())
+    g_pos = list(truth_positions.values())
+    t_ids = list(track_positions.keys())
+    g_ids = list(truth_positions.keys())
+    
+    # Assignment matrix
+    D = np.zeros((n_tracks, n_truth))
+    for i in range(n_tracks):
+        for j in range(n_truth):
+            D[i, j] = np.linalg.norm(np.array(t_pos[i])[:3] - np.array(g_pos[j])[:3])
+    
+    # Optimal assignment
+    if n_tracks > 0 and n_truth > 0:
+        assignments = hungarian_algorithm(D)
+    else:
+        assignments = []
+    
+    # Metrics
+    correct = sum(1 for ti, gi in assignments if D[ti, gi] < threshold)
+    
+    completeness = correct / max(n_truth, 1)
+    
+    # Ambiguity: multiple tracks per truth
+    truth_matched = {}
+    for ti, gi in assignments:
+        if D[ti, gi] < threshold:
+            truth_matched.setdefault(gi, []).append(ti)
+    n_redundant = sum(len(v) - 1 for v in truth_matched.values() if len(v) > 1)
+    ambiguity = n_redundant / max(n_truth, 1)
+    
+    # Spuriousness: tracks not matching any truth
+    spuriousness = max(0, n_tracks - correct) / max(n_tracks, 1)
+    
+    # Accuracy: mean position error for correct associations
+    errors = [D[ti, gi] for ti, gi in assignments if D[ti, gi] < threshold]
+    accuracy = np.mean(errors) if errors else float('inf')
+    
+    return {
+        "completeness": completeness,
+        "ambiguity": ambiguity,
+        "spuriousness": spuriousness,
+        "accuracy": accuracy,
+        "n_correct": correct,
+        "n_redundant": n_redundant,
+        "n_false": max(0, n_tracks - correct),
+    }
+
+
+# ===== TRACK MANAGER =====
+
+@dataclass
+class TrackManagerConfig:
+    """[REQ-V50-TM-02] Track lifecycle configuration."""
+    # Confirmation: M hits in N opportunities
+    confirm_m: int = 3           # Hits required
+    confirm_n: int = 5           # Window size
+    
+    # Deletion: K consecutive misses
+    delete_misses: int = 5       # Consecutive misses to delete
+    
+    # Coasting: C misses before switching to coast
+    coast_misses: int = 2
+    
+    # Maximum coast age before forced deletion
+    max_coast_age: int = 10
+    
+    # Score thresholds (log-likelihood ratio)
+    confirm_score: float = 5.0   # Score to confirm
+    delete_score: float = -5.0   # Score to delete
+    
+    # Gating
+    gate_threshold: float = 16.0  # Chi-sq 99.7% for 3DOF
+    
+    # New track initialization
+    min_separation: float = 100.0  # Min distance between new tracks [m]
+
+
+class TrackManager:
+    """[REQ-V50-TM-03] Track lifecycle manager with M-of-N logic."""
+    
+    def __init__(self, config: Optional[TrackManagerConfig] = None):
+        self.config = config or TrackManagerConfig()
+        self._next_id = 1
+    
+    def create_track(self, z: np.ndarray, dt: float, q_base: float,
+                     r_std: float, timestamp: float = 0.0) -> TrackState:
+        """Initialize a new tentative track from unassigned measurement."""
+        imm = IMM3D(dt=dt, q_base=q_base, r_std=r_std)
+        imm.initialize(z)
+        
+        track = TrackState(
+            track_id=self._next_id,
+            status=TrackStatus.TENTATIVE,
+            filter=imm,
+            hit_count=1,
+            creation_time=timestamp,
+            last_update_time=timestamp,
+            history=[True],
+            score=1.0
+        )
+        
+        self._next_id += 1
+        return track
+    
+    def update_track_hit(self, track: TrackState, z: np.ndarray,
+                         timestamp: float = 0.0) -> None:
+        """Record measurement association (hit) and update lifecycle."""
+        track.filter.update(z)
+        track.hit_count += 1
+        track.miss_count = 0
+        track.total_updates += 1
+        track.last_update_time = timestamp
+        track.history.append(True)
+        
+        # Score update (simplified LLR)
+        track.score += 1.0
+        
+        # Keep history window
+        if len(track.history) > self.config.confirm_n:
+            track.history = track.history[-self.config.confirm_n:]
+        
+        # Check for confirmation
+        if track.status == TrackStatus.TENTATIVE:
+            recent_hits = sum(track.history[-self.config.confirm_n:])
+            if recent_hits >= self.config.confirm_m or track.score >= self.config.confirm_score:
+                track.status = TrackStatus.CONFIRMED
+        
+        # Recover from coasting
+        if track.status == TrackStatus.COASTING:
+            track.status = TrackStatus.CONFIRMED
+    
+    def update_track_miss(self, track: TrackState) -> None:
+        """Record missed association and update lifecycle."""
+        track.miss_count += 1
+        track.total_updates += 1
+        track.history.append(False)
+        track.score -= 1.5  # Miss costs more than hit gains
+        
+        if len(track.history) > self.config.confirm_n:
+            track.history = track.history[-self.config.confirm_n:]
+        
+        # State transitions
+        if track.miss_count >= self.config.delete_misses:
+            track.status = TrackStatus.DELETED
+        elif track.miss_count >= self.config.coast_misses:
+            if track.status == TrackStatus.CONFIRMED:
+                track.status = TrackStatus.COASTING
+        
+        # Tentative track deletion (stricter than confirmed, but configurable)
+        if track.status == TrackStatus.TENTATIVE:
+            tent_limit = max(2, self.config.confirm_n - self.config.confirm_m + 1)
+            if track.miss_count >= tent_limit or track.score < self.config.delete_score:
+                track.status = TrackStatus.DELETED
+    
+    def age_tracks(self, tracks: List[TrackState]) -> None:
+        """Age all tracks and delete stale coasters."""
+        for track in tracks:
+            track.age += 1
+            if (track.status == TrackStatus.COASTING and 
+                track.age - track.hit_count > self.config.max_coast_age):
+                track.status = TrackStatus.DELETED
+
+
+# ===== MULTI-TARGET TRACKER ENGINE =====
+
+class MultiTargetTracker:
+    """[REQ-V50-MTT-01] Complete multi-target tracking engine.
+    
+    Integrates:
+      - 3D IMM filter per track
+      - GNN data association (Munkres algorithm)
+      - Track management (M-of-N init/confirm/delete)
+      - Coasting and track scoring
+    
+    Usage:
+        mtt = MultiTargetTracker(dt=1.0, r_std=50.0, q_base=1.0)
+        
+        # Each scan:
+        confirmed = mtt.process_scan(measurements_3d, timestamp)
+        for track in confirmed:
+            print(f"Track {track.track_id}: pos={track.filter.position}")
+    """
+    
+    def __init__(self, dt: float = 1.0, r_std: float = 50.0,
+                 q_base: float = 1.0, domain: Optional[str] = None,
+                 config: Optional[TrackManagerConfig] = None,
+                 association: str = "gnn"):
+        """
+        Args:
+            dt: Scan interval [seconds]
+            r_std: Measurement noise std dev [meters]
+            q_base: Process noise base intensity
+            domain: Preset domain for tuning (military, atc, automotive, space)
+            config: Track management configuration
+            association: Data association method - "gnn" or "jpda"
+        """
+        self.dt = dt
+        self.r_std = r_std
+        self.q_base = q_base
+        self.domain = domain
+        self.association = AssociationMethod(association)
+        
+        # Apply domain presets
+        if config is None:
+            config = self._domain_config(domain)
+        self.config = config
+        
+        self.track_manager = TrackManager(config)
+        self.tracks: List[TrackState] = []
+        self._step = 0
+        self._timestamp = 0.0
+        
+        # Statistics
+        self.stats = {
+            "total_tracks_created": 0,
+            "total_tracks_deleted": 0,
+            "current_confirmed": 0,
+            "current_tentative": 0,
+            "current_coasting": 0,
+            "scans_processed": 0,
+        }
+    
+    def _domain_config(self, domain: Optional[str]) -> TrackManagerConfig:
+        """Domain-specific track management presets."""
+        presets = {
+            "military": TrackManagerConfig(
+                confirm_m=2, confirm_n=3, delete_misses=3,
+                coast_misses=1, max_coast_age=5,
+                gate_threshold=25.0, min_separation=200.0
+            ),
+            "atc": TrackManagerConfig(
+                confirm_m=3, confirm_n=5, delete_misses=5,
+                coast_misses=2, max_coast_age=8,
+                gate_threshold=16.0, min_separation=500.0
+            ),
+            "automotive": TrackManagerConfig(
+                confirm_m=3, confirm_n=4, delete_misses=3,
+                coast_misses=1, max_coast_age=3,
+                gate_threshold=12.0, min_separation=5.0
+            ),
+            "space": TrackManagerConfig(
+                confirm_m=3, confirm_n=5, delete_misses=10,
+                coast_misses=3, max_coast_age=20,
+                gate_threshold=25.0, min_separation=10000.0
+            ),
+            "maritime": TrackManagerConfig(
+                confirm_m=3, confirm_n=5, delete_misses=8,
+                coast_misses=3, max_coast_age=15,
+                gate_threshold=16.0, min_separation=100.0
+            ),
+        }
+        return presets.get(domain, TrackManagerConfig())
+    
+    def process_scan(self, measurements: np.ndarray,
+                     timestamp: Optional[float] = None) -> List[TrackState]:
+        """[REQ-V50-MTT-02] Process one scan of measurements.
+        
+        Full MTT cycle: predict → associate → update → manage → report.
+        
+        Args:
+            measurements: Mx3 array of [x, y, z] measurements (Cartesian)
+                         Can be Mx2 for 2D mode (z auto-set to 0)
+            timestamp: Scan timestamp (auto-incremented if None)
+        
+        Returns:
+            List of confirmed tracks
+        """
+        if timestamp is None:
+            timestamp = self._step * self.dt
+        self._timestamp = timestamp
+        
+        # Handle 2D input gracefully
+        if measurements.ndim == 1:
+            measurements = measurements.reshape(1, -1)
+        if measurements.shape[1] == 2:
+            z3d = np.zeros((len(measurements), 3))
+            z3d[:, :2] = measurements
+            measurements = z3d
+        
+        # 1. PREDICT all active tracks
+        active = [t for t in self.tracks if t.status != TrackStatus.DELETED]
+        for track in active:
+            track.filter.predict()
+        
+        # 2. DATA ASSOCIATION (GNN or JPDA)
+        if self.association == AssociationMethod.JPDA:
+            weighted_meas, unassigned_tracks, unassigned_meas = jpda_associate(
+                active, measurements, self.config.gate_threshold
+            )
+            
+            # 3a. UPDATE tracks with JPDA weighted measurements
+            for track_idx, z_weighted in weighted_meas.items():
+                self.track_manager.update_track_hit(
+                    active[track_idx], z_weighted, timestamp
+                )
+            
+            # 4a. MISS unassigned tracks
+            for track_idx in unassigned_tracks:
+                self.track_manager.update_track_miss(active[track_idx])
+        else:
+            # GNN (default)
+            assignments, unassigned_tracks, unassigned_meas = gnn_associate(
+                active, measurements, self.config.gate_threshold
+            )
+            
+            # 3b. UPDATE assigned tracks
+            for track_idx, meas_idx in assignments:
+                self.track_manager.update_track_hit(
+                    active[track_idx], measurements[meas_idx], timestamp
+                )
+            
+            # 4b. MISS unassigned tracks
+            for track_idx in unassigned_tracks:
+                self.track_manager.update_track_miss(active[track_idx])
+        
+        # 5. INITIATE new tracks from unassigned measurements
+        for meas_idx in unassigned_meas:
+            z = measurements[meas_idx]
+            
+            # Check minimum separation from existing tracks
+            too_close = False
+            for track in active:
+                if track.status != TrackStatus.DELETED:
+                    d = np.linalg.norm(z[:3] - track.filter.position)
+                    if d < self.config.min_separation:
+                        too_close = True
+                        break
+            
+            if not too_close:
+                new_track = self.track_manager.create_track(
+                    z, self.dt, self.q_base, self.r_std, timestamp
+                )
+                self.tracks.append(new_track)
+                self.stats["total_tracks_created"] += 1
+        
+        # 6. AGE tracks and delete stale
+        self.track_manager.age_tracks(self.tracks)
+        
+        # 7. CLEANUP deleted tracks
+        n_before = len(self.tracks)
+        self.tracks = [t for t in self.tracks if t.status != TrackStatus.DELETED]
+        self.stats["total_tracks_deleted"] += (n_before - len(self.tracks))
+        
+        # 8. UPDATE statistics
+        self._step += 1
+        self.stats["scans_processed"] = self._step
+        self.stats["current_confirmed"] = sum(
+            1 for t in self.tracks if t.status == TrackStatus.CONFIRMED
+        )
+        self.stats["current_tentative"] = sum(
+            1 for t in self.tracks if t.status == TrackStatus.TENTATIVE
+        )
+        self.stats["current_coasting"] = sum(
+            1 for t in self.tracks if t.status == TrackStatus.COASTING
+        )
+        
+        return self.confirmed_tracks
+    
+    @property
+    def confirmed_tracks(self) -> List[TrackState]:
+        """Get all confirmed (active, reliable) tracks."""
+        return [t for t in self.tracks 
+                if t.status in (TrackStatus.CONFIRMED, TrackStatus.COASTING)]
+    
+    @property
+    def all_tracks(self) -> List[TrackState]:
+        """Get all non-deleted tracks."""
+        return [t for t in self.tracks if t.status != TrackStatus.DELETED]
+    
+    def get_track(self, track_id: int) -> Optional[TrackState]:
+        """Get track by ID."""
+        for t in self.tracks:
+            if t.track_id == track_id:
+                return t
+        return None
+    
+    def get_positions(self) -> Dict[int, np.ndarray]:
+        """Get confirmed track positions as {track_id: [x,y,z]}."""
+        return {t.track_id: t.filter.position for t in self.confirmed_tracks}
+    
+    def get_velocities(self) -> Dict[int, np.ndarray]:
+        """Get confirmed track velocities as {track_id: [vx,vy,vz]}."""
+        return {t.track_id: t.filter.velocity for t in self.confirmed_tracks}
+    
+    def summary(self) -> str:
+        """Human-readable tracker summary."""
+        lines = [f"MTT Engine — Step {self._step} — {len(self.tracks)} tracks"]
+        for t in self.tracks:
+            pos = t.filter.position
+            vel = t.filter.velocity
+            speed = np.linalg.norm(vel)
+            lines.append(
+                f"  T{t.track_id:03d} [{t.status.name:10s}] "
+                f"pos=({pos[0]:.0f}, {pos[1]:.0f}, {pos[2]:.0f}) "
+                f"speed={speed:.1f}m/s hits={t.hit_count} age={t.age}"
+            )
+        lines.append(f"  Stats: {self.stats}")
+        return "\n".join(lines)
+    
+    def __repr__(self):
+        return (f"MultiTargetTracker(tracks={len(self.tracks)}, "
+                f"confirmed={self.stats['current_confirmed']}, "
+                f"step={self._step})")
+
+
+# ===== SIAP METRICS =====
+
+def compute_ospa(track_positions: List[np.ndarray],
+                 truth_positions: List[np.ndarray],
+                 c: float = 200.0, p: float = 2.0) -> float:
+    """[REQ-V50-MET-01] OSPA metric (Optimal Sub-Pattern Assignment).
+    
+    Schuhmacher et al. (2008) — standard metric for multi-target tracking.
+    
+    Args:
+        track_positions: List of estimated positions
+        truth_positions: List of true positions
+        c: Cutoff distance [m] (penalizes cardinality errors)
+        p: Order parameter (2 = Euclidean)
+    
+    Returns:
+        OSPA distance (lower is better, 0 = perfect)
+    """
+    n = len(truth_positions)
+    m = len(track_positions)
+    
+    if n == 0 and m == 0:
+        return 0.0
+    if n == 0 or m == 0:
+        return c  # Maximum penalty
+    
+    # Build distance matrix
+    n_max = max(n, m)
+    D = np.full((n_max, n_max), c)
+    
+    for i in range(n):
+        for j in range(m):
+            d = np.linalg.norm(np.array(truth_positions[i]) - np.array(track_positions[j]))
+            D[i, j] = min(d, c)
+    
+    # Optimal assignment
+    assignments = hungarian_algorithm(D[:n, :m] if n <= m else D[:m, :n].T)
+    
+    # Location component
+    loc_sum = 0.0
+    for ai, bi in assignments:
+        loc_sum += D[ai, bi]**p
+    
+    # Cardinality component
+    card_penalty = abs(n - m) * c**p
+    
+    ospa = ((loc_sum + card_penalty) / max(n, m)) ** (1.0/p)
+    return ospa
+
+
+def compute_track_metrics(mtt: MultiTargetTracker,
+                          truth: Dict[int, np.ndarray]) -> Dict[str, float]:
+    """[REQ-V50-MET-02] SIAP-style track quality metrics.
+    
+    Args:
+        mtt: Tracker with current state
+        truth: {truth_id: position_3d} ground truth
+    
+    Returns:
+        Dict with completeness, purity, false track rate, etc.
+    """
+    confirmed = mtt.confirmed_tracks
+    truth_positions = list(truth.values())
+    track_positions = [t.filter.position for t in confirmed]
+    
+    n_truth = len(truth)
+    n_tracks = len(confirmed)
+    
+    # Assignment for metrics
+    if n_truth > 0 and n_tracks > 0:
+        D = np.zeros((n_tracks, n_truth))
+        for i in range(n_tracks):
+            for j in range(n_truth):
+                D[i, j] = np.linalg.norm(track_positions[i] - truth_positions[j])
+        
+        assignments = hungarian_algorithm(D)
+        
+        # Count correct associations (within 3σ)
+        correct = sum(1 for ti, gi in assignments if D[ti, gi] < 3 * mtt.r_std)
+        
+        completeness = correct / max(n_truth, 1)  # % of truths tracked
+        purity = correct / max(n_tracks, 1)        # % of tracks that are real
+        false_tracks = max(0, n_tracks - correct)
+    else:
+        completeness = 0.0
+        purity = 1.0 if n_tracks == 0 else 0.0
+        false_tracks = n_tracks
+    
+    ospa = compute_ospa(track_positions, truth_positions)
+    
+    return {
+        "completeness": completeness,
+        "purity": purity,
+        "false_tracks": false_tracks,
+        "n_confirmed": n_tracks,
+        "n_truth": n_truth,
+        "ospa": ospa,
+    }
