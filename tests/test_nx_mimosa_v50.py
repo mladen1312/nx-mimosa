@@ -23,6 +23,9 @@ from nx_mimosa_mtt import (
     IMM3D, KalmanFilter3D, gnn_associate, hungarian_algorithm,
     make_cv3d_matrices, make_ca3d_matrices, make_ct3d_matrices,
     compute_ospa, compute_track_metrics,
+    SensorBiasEstimator, SensorBias, OOSMHandler,
+    doppler_measurement_matrix, compute_radial_velocity,
+    make_cv3d_doppler_matrices,
 )
 
 
@@ -888,3 +891,283 @@ class TestCrossingTargets:
             confirmed = mtt.confirmed_tracks
             assert len(confirmed) >= 2, \
                 f"{method.upper()}: Expected ≥2 tracks at crossing, got {len(confirmed)}"
+
+
+# ============================================================
+# SENSOR BIAS ESTIMATION TESTS
+# ============================================================
+
+class TestSensorBiasEstimator:
+    """Tests for online sensor bias estimation."""
+    
+    def test_zero_bias(self):
+        """Unbiased sensor should show near-zero bias estimate."""
+        np.random.seed(42)
+        est = SensorBiasEstimator(alpha=0.05, min_samples=20)
+        
+        for _ in range(100):
+            innovation = np.random.randn(3) * 10  # Zero-mean noise
+            S = np.eye(3) * 100
+            est.update(innovation, S)
+        
+        bias = est.get_bias()
+        assert abs(bias.range_bias) < 5.0, f"Range bias too large: {bias.range_bias}"
+        assert abs(bias.azimuth_bias) < 5.0
+        assert bias.n_samples == 100
+    
+    def test_detect_range_bias(self):
+        """Should detect systematic range bias."""
+        np.random.seed(42)
+        est = SensorBiasEstimator(alpha=0.05, min_samples=20)
+        
+        TRUE_BIAS = 50.0  # 50m range bias
+        for _ in range(200):
+            innovation = np.array([TRUE_BIAS + np.random.randn() * 5,
+                                   np.random.randn() * 0.01,
+                                   np.random.randn() * 0.01])
+            S = np.diag([25.0, 0.0001, 0.0001])
+            est.update(innovation, S)
+        
+        bias = est.get_bias()
+        assert abs(bias.range_bias - TRUE_BIAS) < 10.0, \
+            f"Expected ~{TRUE_BIAS}, got {bias.range_bias}"
+        
+        is_biased, dims = est.is_biased()
+        assert is_biased
+        assert "range" in dims
+    
+    def test_detect_azimuth_bias(self):
+        """Should detect systematic azimuth bias."""
+        np.random.seed(42)
+        est = SensorBiasEstimator(alpha=0.05, min_samples=20)
+        
+        AZ_BIAS = 0.02  # ~1.1 degrees
+        for _ in range(200):
+            innovation = np.array([np.random.randn() * 10,
+                                   AZ_BIAS + np.random.randn() * 0.002,
+                                   np.random.randn() * 0.005])
+            S = np.diag([100.0, 4e-6, 25e-6])
+            est.update(innovation, S)
+        
+        bias = est.get_bias()
+        assert abs(bias.azimuth_bias - AZ_BIAS) < 0.005
+    
+    def test_correct_measurement(self):
+        """Bias correction should remove estimated bias from measurements."""
+        est = SensorBiasEstimator(alpha=0.1, min_samples=5)
+        
+        # Train with known bias
+        for _ in range(50):
+            est.update(np.array([100.0, 0.01, 0.0]), np.eye(3))
+        
+        bias = est.get_bias()
+        raw = np.array([5000.0, 0.5, 0.1])
+        corrected = est.correct_measurement(raw)
+        
+        assert corrected[0] < raw[0]  # Range corrected down
+        assert corrected[1] < raw[1]  # Azimuth corrected
+    
+    def test_insufficient_samples(self):
+        """Should not claim bias with too few samples."""
+        est = SensorBiasEstimator(alpha=0.05, min_samples=20)
+        
+        for _ in range(10):  # Only 10 samples, need 20
+            est.update(np.array([100.0, 0.0, 0.0]), np.eye(3))
+        
+        is_biased, _ = est.is_biased()
+        assert not is_biased
+    
+    def test_reset(self):
+        """Reset should clear all state."""
+        est = SensorBiasEstimator()
+        est.update(np.array([100.0, 0.0, 0.0]), np.eye(3))
+        est.reset()
+        assert est.get_bias().n_samples == 0
+    
+    def test_2d_innovation(self):
+        """Should handle 2D innovation vectors."""
+        est = SensorBiasEstimator(alpha=0.1, min_samples=5)
+        
+        for _ in range(20):
+            innovation = np.array([50.0, 0.01])
+            S = np.eye(2) * 10
+            est.update(innovation, S)
+        
+        bias = est.get_bias()
+        assert abs(bias.range_bias - 50.0) < 15.0
+        assert abs(bias.elevation_bias) < 0.01  # Untouched
+
+
+# ============================================================
+# OUT-OF-SEQUENCE MEASUREMENT TESTS
+# ============================================================
+
+class TestOOSMHandler:
+    """Tests for Out-of-Sequence Measurement handling."""
+    
+    def test_save_state(self):
+        """Should store state history."""
+        oosm = OOSMHandler(max_lag=5)
+        F = np.eye(6)
+        Q = np.eye(6) * 0.1
+        
+        for t in range(10):
+            x = np.zeros(6)
+            x[0] = t * 100.0
+            oosm.save_state(float(t), x, np.eye(6), F, Q)
+        
+        assert oosm.history_depth == 7  # max_lag + 2
+    
+    def test_can_handle(self):
+        """Should report whether OOSM timestamp is in range."""
+        oosm = OOSMHandler(max_lag=5)
+        F = np.eye(6)
+        Q = np.eye(6) * 0.1
+        
+        for t in range(10):
+            oosm.save_state(float(t), np.zeros(6), np.eye(6), F, Q)
+        
+        assert oosm.can_handle(5.0)  # Within history
+        assert not oosm.can_handle(-1.0)  # Before history
+    
+    def test_process_basic_oosm(self):
+        """OOSM should improve state estimate."""
+        np.random.seed(42)
+        
+        # Create a simple KF
+        F, Q = make_cv3d_matrices(1.0, 1.0)
+        kf = KalmanFilter3D(nx=6, nz=3)
+        kf.F = F
+        kf.Q = Q
+        kf.H = np.eye(3, 6)
+        kf.R = np.eye(3) * 100
+        kf.x = np.array([0, 0, 0, 100, 0, 0], dtype=float)
+        kf.P = np.eye(6) * 1000
+        
+        oosm = OOSMHandler(max_lag=5)
+        
+        # Run several in-sequence updates
+        for t in range(5):
+            kf.predict()
+            z = np.array([100*(t+1), 0, 0]) + np.random.randn(3) * 10
+            kf.update(z)
+            oosm.save_state(float(t+1), kf.x.copy(), kf.P.copy(), F, Q)
+        
+        pos_before = kf.x[0]
+        P_before = kf.P[0, 0]
+        
+        # Process an OOSM at t=2.5 (between saved states)
+        z_oosm = np.array([250, 5, 0])  # Close to truth at t=2.5
+        result = oosm.process_oosm(kf, z_oosm, t_oosm=2.0, t_current=5.0)
+        
+        assert result is True
+        assert oosm.stats["oosm_processed"] == 1
+        # Covariance should decrease (more information)
+        assert kf.P[0, 0] <= P_before
+    
+    def test_reject_old_oosm(self):
+        """OOSM older than history should be rejected."""
+        oosm = OOSMHandler(max_lag=3)
+        F = np.eye(6)
+        Q = np.eye(6) * 0.1
+        
+        # Save only recent states
+        for t in range(10, 20):
+            oosm.save_state(float(t), np.zeros(6), np.eye(6), F, Q)
+        
+        F2, Q2 = make_cv3d_matrices(1.0, 1.0)
+        kf = KalmanFilter3D(nx=6, nz=3)
+        kf.F = F2
+        kf.Q = Q2
+        kf.H = np.eye(3, 6)
+        kf.R = np.eye(3) * 100
+        kf.x = np.zeros(6)
+        kf.P = np.eye(6) * 1000
+        
+        # Try OOSM from t=5 — way before history
+        result = oosm.process_oosm(kf, np.zeros(3), t_oosm=5.0, t_current=19.0)
+        assert result is False
+        assert oosm.stats["oosm_rejected"] >= 1
+    
+    def test_empty_history(self):
+        """OOSM with no history should fail gracefully."""
+        oosm = OOSMHandler()
+        assert not oosm.can_handle(1.0)
+        assert oosm.history_depth == 0
+
+
+# ============================================================
+# DOPPLER INTEGRATION TESTS
+# ============================================================
+
+class TestDopplerIntegration:
+    """Tests for native Doppler measurement handling."""
+    
+    def test_doppler_matrices(self):
+        """Doppler measurement matrix should be 4×6."""
+        F, Q, H_dop = make_cv3d_doppler_matrices(dt=1.0, q=1.0)
+        assert F.shape == (6, 6)
+        assert Q.shape == (6, 6)
+        assert H_dop.shape == (4, 6)
+        assert H_dop[3, 3] == 1.0  # vx component
+    
+    def test_doppler_h_matrix_geometry(self):
+        """Doppler H should project velocity onto LOS."""
+        # Target at (1000, 0, 0), moving at (100, 0, 0) — directly away
+        state = np.array([1000.0, 0.0, 0.0, 100.0, 0.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        H = doppler_measurement_matrix(state, sensor)
+        assert H.shape == (4, 6)
+        
+        # LOS is pure x-direction → vx fully projects to radial
+        assert abs(H[3, 3] - 1.0) < 0.01
+        assert abs(H[3, 4]) < 0.01
+        assert abs(H[3, 5]) < 0.01
+    
+    def test_doppler_h_matrix_diagonal(self):
+        """Doppler H for diagonal target."""
+        # Target at (1000, 1000, 0) → LOS = (1/√2, 1/√2, 0)
+        state = np.array([1000.0, 1000.0, 0.0, 100.0, 0.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        H = doppler_measurement_matrix(state, sensor)
+        expected = 1.0 / np.sqrt(2)
+        assert abs(H[3, 3] - expected) < 0.01
+        assert abs(H[3, 4] - expected) < 0.01
+    
+    def test_compute_radial_velocity_head_on(self):
+        """Head-on target should have negative radial velocity."""
+        # Target at (1000, 0, 0) moving toward sensor at (-200, 0, 0)
+        state = np.array([1000.0, 0.0, 0.0, -200.0, 0.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        vr = compute_radial_velocity(state, sensor)
+        assert vr < 0  # Approaching
+        assert abs(vr - (-200.0)) < 0.1
+    
+    def test_compute_radial_velocity_receding(self):
+        """Receding target should have positive radial velocity."""
+        state = np.array([1000.0, 0.0, 0.0, 200.0, 0.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        vr = compute_radial_velocity(state, sensor)
+        assert vr > 0  # Receding
+        assert abs(vr - 200.0) < 0.1
+    
+    def test_compute_radial_velocity_tangential(self):
+        """Purely tangential velocity should give zero radial."""
+        # Target at (1000, 0, 0) moving perpendicular (0, 200, 0)
+        state = np.array([1000.0, 0.0, 0.0, 0.0, 200.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        vr = compute_radial_velocity(state, sensor)
+        assert abs(vr) < 0.1  # Nearly zero radial
+    
+    def test_doppler_sensor_at_target(self):
+        """Edge case: sensor at target position."""
+        state = np.array([0.0, 0.0, 0.0, 100.0, 0.0, 0.0])
+        sensor = np.array([0.0, 0.0, 0.0])
+        
+        vr = compute_radial_velocity(state, sensor)
+        assert vr == 0.0  # Degenerate case
