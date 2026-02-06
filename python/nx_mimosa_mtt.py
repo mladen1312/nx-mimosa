@@ -875,6 +875,257 @@ def mht_associate(tracks: List[TrackState], measurements: np.ndarray,
     return best_measurements, unassigned_tracks, unassigned_meas
 
 
+# ===== ENHANCED MHT — CLUSTER GATING + N-SCAN PRUNING =====
+
+def _build_clusters(validation: np.ndarray) -> List[Tuple[List[int], List[int]]]:
+    """[REQ-V55-MHT-10] Cluster tracks and measurements by gate overlap.
+    
+    Finds connected components in the track-measurement validation graph.
+    Each cluster is solved independently — reduces combinatorial explosion
+    from O(M^N) to O(sum(m_k^n_k)) per cluster.
+    
+    Args:
+        validation: N_tracks × N_meas boolean gating matrix
+    
+    Returns:
+        List of (track_indices, meas_indices) clusters
+    """
+    n_tracks, n_meas = validation.shape
+    visited_t = set()
+    visited_m = set()
+    clusters = []
+    
+    for start_t in range(n_tracks):
+        if start_t in visited_t:
+            continue
+        
+        # BFS to find connected component
+        cluster_t = set()
+        cluster_m = set()
+        queue_t = [start_t]
+        
+        while queue_t:
+            t = queue_t.pop()
+            if t in cluster_t:
+                continue
+            cluster_t.add(t)
+            visited_t.add(t)
+            
+            # Find all measurements gated to this track
+            for m in range(n_meas):
+                if validation[t, m] and m not in cluster_m:
+                    cluster_m.add(m)
+                    visited_m.add(m)
+                    # Find all other tracks gated to this measurement
+                    for t2 in range(n_tracks):
+                        if validation[t2, m] and t2 not in cluster_t:
+                            queue_t.append(t2)
+        
+        if cluster_t:
+            clusters.append((sorted(cluster_t), sorted(cluster_m)))
+    
+    # Add isolated measurements (no track gated)
+    all_gated_m = visited_m
+    for m in range(n_meas):
+        if m not in all_gated_m:
+            clusters.append(([], [m]))
+    
+    return clusters
+
+
+@dataclass
+class MHTHypothesisTree:
+    """[REQ-V55-MHT-11] N-scan hypothesis tree for deferred decisions.
+    
+    Maintains a history of hypotheses over N scans, allowing retroactive
+    resolution of ambiguous assignments once more data arrives.
+    """
+    scan_hypotheses: List[List[MHTHypothesis]] = field(default_factory=list)
+    n_scan_depth: int = 3
+    
+    def add_scan(self, hypotheses: List[MHTHypothesis]) -> None:
+        """Store hypotheses from this scan."""
+        self.scan_hypotheses.append(hypotheses)
+        if len(self.scan_hypotheses) > self.n_scan_depth:
+            self.scan_hypotheses = self.scan_hypotheses[-self.n_scan_depth:]
+    
+    def get_n_scan_best(self) -> Optional[MHTHypothesis]:
+        """Get the best hypothesis considering N-scan history.
+        
+        The N-scan pruning rule: a hypothesis branch that has been consistently
+        best (or near-best) over N scans is promoted to confirmed assignment.
+        """
+        if not self.scan_hypotheses:
+            return None
+        
+        # Score each current hypothesis by consistency with history
+        current = self.scan_hypotheses[-1]
+        if not current:
+            return None
+        
+        if len(self.scan_hypotheses) < 2:
+            return max(current, key=lambda h: h.score)
+        
+        # Weighted scoring: recent scans weight more
+        best_score = -np.inf
+        best_hyp = current[0]
+        
+        for hyp in current:
+            composite = hyp.score
+            # Bonus for consistency with previous scan assignments
+            for depth, prev_scan in enumerate(reversed(self.scan_hypotheses[:-1])):
+                if not prev_scan:
+                    continue
+                weight = 0.5 ** (depth + 1)  # Exponential decay
+                prev_best = max(prev_scan, key=lambda h: h.score)
+                # Overlap bonus: how many assignments agree
+                overlap = sum(1 for k, v in hyp.assignments.items()
+                            if k in prev_best.assignments and prev_best.assignments[k] == v)
+                composite += weight * overlap * 2.0
+            
+            if composite > best_score:
+                best_score = composite
+                best_hyp = hyp
+        
+        return best_hyp
+
+
+def mht_associate_enhanced(tracks: List['TrackState'], measurements: np.ndarray,
+                           gate_threshold: float = 16.0, p_detection: float = 0.9,
+                           max_hypotheses: int = 100, n_best: int = 10,
+                           clutter_density: float = 1e-6,
+                           hypothesis_tree: Optional[MHTHypothesisTree] = None,
+                           ) -> Tuple[Dict[int, np.ndarray], List[int], List[int]]:
+    """[REQ-V55-MHT-12] Enhanced MHT with cluster gating and N-scan pruning.
+    
+    Improvements over basic MHT:
+    1. **Cluster gating** — decomposes into independent sub-problems
+    2. **Clutter model** — explicit false alarm likelihood per measurement
+    3. **N-scan pruning** — deferred decisions resolved with history
+    4. **Murty's algorithm-inspired** — k-best in each cluster
+    
+    Reference:
+        Blackman & Popoli, "Design & Analysis of Modern Tracking Systems" (1999)
+        Cox & Hingorani, "An efficient implementation of Reid's MHT" (1996)
+    
+    Args:
+        tracks: Active track list
+        measurements: Mx3 measurement array
+        gate_threshold: Chi-squared gate
+        p_detection: Detection probability
+        max_hypotheses: Max hypotheses per cluster
+        n_best: K-best to keep globally
+        clutter_density: Spatial density of false alarms (per m³)
+        hypothesis_tree: Optional N-scan history tree
+    
+    Returns:
+        Tuple: (assignments, unassigned_tracks, unassigned_measurements)
+    """
+    n_tracks = len(tracks)
+    n_meas = len(measurements) if len(measurements.shape) > 1 else 0
+    
+    if n_tracks == 0 or n_meas == 0:
+        return {}, list(range(n_tracks)), list(range(n_meas))
+    
+    # Step 1: Validation gating
+    validation = np.zeros((n_tracks, n_meas), dtype=bool)
+    mahal_dist = np.full((n_tracks, n_meas), 1e9)
+    
+    for i, track in enumerate(tracks):
+        if track.status == TrackStatus.DELETED:
+            continue
+        for j in range(n_meas):
+            d2 = track.filter.mahalanobis_distance(measurements[j])
+            if d2 < gate_threshold:
+                validation[i, j] = True
+                mahal_dist[i, j] = d2
+    
+    # Step 2: Cluster decomposition
+    clusters = _build_clusters(validation)
+    
+    # Step 3: Solve each cluster independently
+    all_assignments = {}
+    all_assigned_meas = set()
+    all_hypotheses = []
+    
+    for cluster_tracks, cluster_meas in clusters:
+        if not cluster_tracks:
+            continue  # Isolated measurements → new track candidates
+        
+        # Build sub-problem
+        cluster_hyps = [MHTHypothesis(
+            assignments={t: -1 for t in cluster_tracks},
+            score=len(cluster_tracks) * np.log(max(1.0 - p_detection, 1e-10)),
+            unassigned_meas=list(cluster_meas),
+        )]
+        
+        for t_idx in cluster_tracks:
+            if tracks[t_idx].status == TrackStatus.DELETED:
+                continue
+            
+            valid_m = [m for m in cluster_meas if validation[t_idx, m]]
+            if not valid_m:
+                continue
+            
+            new_hyps = []
+            for hyp in cluster_hyps:
+                taken = {v for v in hyp.assignments.values() if v >= 0}
+                
+                for m_idx in valid_m:
+                    if m_idx in taken:
+                        continue
+                    
+                    new_a = dict(hyp.assignments)
+                    new_a[t_idx] = m_idx
+                    
+                    # Log-likelihood ratio vs clutter
+                    detection_ll = np.log(max(p_detection, 1e-10)) - 0.5 * mahal_dist[t_idx, m_idx]
+                    miss_ll = np.log(max(1.0 - p_detection, 1e-10))
+                    clutter_ll = np.log(max(clutter_density, 1e-20))
+                    
+                    delta = detection_ll - miss_ll - clutter_ll
+                    
+                    new_hyps.append(MHTHypothesis(
+                        assignments=new_a,
+                        score=hyp.score + delta,
+                        unassigned_meas=[m for m in hyp.unassigned_meas if m != m_idx],
+                    ))
+                
+                new_hyps.append(hyp)
+            
+            new_hyps.sort(key=lambda h: h.score, reverse=True)
+            cluster_hyps = new_hyps[:max_hypotheses]
+        
+        all_hypotheses.extend(cluster_hyps)
+        
+        # Best for this cluster
+        if cluster_hyps:
+            best = max(cluster_hyps, key=lambda h: h.score)
+            for t_idx, m_idx in best.assignments.items():
+                if m_idx >= 0:
+                    all_assignments[t_idx] = measurements[m_idx, :3]
+                    all_assigned_meas.add(m_idx)
+    
+    # Step 4: N-scan pruning (if tree provided)
+    if hypothesis_tree is not None:
+        hypothesis_tree.add_scan(all_hypotheses[:n_best])
+        n_scan_best = hypothesis_tree.get_n_scan_best()
+        if n_scan_best is not None:
+            # Override with N-scan-confirmed assignments
+            for t_idx, m_idx in n_scan_best.assignments.items():
+                if m_idx >= 0 and m_idx < n_meas:
+                    all_assignments[t_idx] = measurements[m_idx, :3]
+                    all_assigned_meas.add(m_idx)
+    
+    assigned_tracks = set(all_assignments.keys())
+    unassigned_tracks = [i for i in range(n_tracks)
+                         if i not in assigned_tracks
+                         and tracks[i].status != TrackStatus.DELETED]
+    unassigned_meas = [j for j in range(n_meas) if j not in all_assigned_meas]
+    
+    return all_assignments, unassigned_tracks, unassigned_meas
+
+
 class AssociationMethod(Enum):
     """Data association algorithm selection."""
     GNN = "gnn"     # Global Nearest Neighbor — fast, simple
