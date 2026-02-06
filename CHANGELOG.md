@@ -1,5 +1,35 @@
 # NX-MIMOSA Changelog
 
+## v5.5.0 — "FULL STACK" (2026-02-06)
+
+### 🎯 Headline: v4.x Intelligence Port + Jupyter Examples + CONTRIBUTING — Production Complete
+
+**Commercial readiness: 85% → 92%**
+
+#### v4.x Feature Port (Intelligence + Fusion)
+- **Platform Classifier** — 111 platform types, kinematics-only, hierarchical speed→class→fine
+- **ECM Detector** — Noise jamming, deception, DRFM, chaff via SNR/RCS/Doppler/NIS anomaly
+- **Intent Predictor** — 16 intent types (transit, patrol, orbit, ingress, attack_run, evasion, etc.)
+- **IntelligencePipeline** — Unified per-track assessment with composite threat score [0,1]
+- **MultiSensorFusionEngine** — Centralized sequential Kalman fusion with sensor health monitoring
+- **Sensor factory functions** — `make_radar_sensor()`, `make_doppler_radar_sensor()`, `make_eo_sensor()`, `make_adsb_sensor()`, `make_esm_sensor()`
+
+#### Package Updates
+- Full `nx_mimosa` namespace now exports intelligence + fusion APIs
+- 22 new tests for intelligence (platform, ECM, intent, pipeline) + fusion (engine, sensors, health)
+
+#### Examples
+- `examples/01_quickstart.ipynb` — 5-minute multi-target tracking tutorial
+- `examples/03_platform_id_ecm_intent.ipynb` — Intelligence pipeline demo with threat board
+
+#### Governance
+- `CONTRIBUTING.md` — Development setup, code standards, CLA policy, contribution table
+
+#### Tests
+- **223/223 tests PASS** (170 core + 22 intelligence/fusion + 31 existing)
+
+---
+
 ## v5.3.0 — "FORGE READY" (2026-02-06)
 
 ### 🎯 Headline: T2TA + Track Quality + CI/CD + Docker — Production Pipeline Complete
