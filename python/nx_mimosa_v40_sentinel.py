@@ -1327,15 +1327,51 @@ class NxMimosaV40Sentinel:
         for m in self.active_models: self.mu[m] = max(liks[m]*cb[m]/tot, 1e-30)
         ms = sum(self.mu.values())
         for m in self.active_models: self.mu[m] /= ms
+
+        # 3b. Mode probability floor — prevent model death (Bar-Shalom IMM robustification)
+        MU_FLOOR = 0.015
+        n_active = len(self.active_models)
+        floor_total = MU_FLOOR * n_active
+        if floor_total < 1.0:  # sanity
+            needs_floor = [m for m in self.active_models if self.mu[m] < MU_FLOOR]
+            if needs_floor:
+                deficit = sum(MU_FLOOR - self.mu[m] for m in needs_floor)
+                donors = [m for m in self.active_models if m not in needs_floor]
+                donor_total = sum(self.mu[m] for m in donors)
+                if donor_total > deficit + MU_FLOOR * len(donors):
+                    for m in needs_floor:
+                        self.mu[m] = MU_FLOOR
+                    for m in donors:
+                        self.mu[m] -= deficit * (self.mu[m] / donor_total)
+
+        # 3c. NIS-reactive rebalancing — when dominant model prediction fails,
+        #     boost alternatives to allow faster mode switching
+        dom_model = max(self.active_models, key=lambda m: self.mu[m])
+        dom_nis = nis_models.get(dom_model, 0)
+        if dom_nis > 12.0 and self.mu[dom_model] > 0.5 and self.step > 10:
+            # Dominant model is clearly wrong — redistribute some probability
+            # Scale: NIS=12 → mild (5%), NIS=30+ → strong (25%)
+            transfer_frac = min(0.25, 0.05 * (dom_nis - 12.0) / 10.0 + 0.05)
+            transfer = self.mu[dom_model] * transfer_frac
+            self.mu[dom_model] -= transfer
+            others = [m for m in self.active_models if m != dom_model]
+            for m in others:
+                self.mu[m] += transfer / len(others)
+
+        # Renormalize
+        ms = sum(self.mu.values())
+        for m in self.active_models: self.mu[m] /= ms
         
-        # Adaptive p_stay: dominant model → higher stay, benign mode → much higher
+        # Adaptive p_stay: dominant model → higher stay, but NIS-capped
         max_mu = max(self.mu.values())
+        # NIS penalty: high NIS on dominant model → reduce stickiness
+        dom_nis_penalty = max(0, (dom_nis - 8.0) * 0.01) if self.step > 10 else 0
         if self.benign_streak > 20:
-            self.p_stay = 0.97  # Lock models during benign flight
+            self.p_stay = min(0.95, 0.95 - dom_nis_penalty)  # Was 0.97
         elif max_mu > 0.75:
-            self.p_stay = min(0.95, 0.88 + 0.1 * (max_mu - 0.75) / 0.25)
+            self.p_stay = min(0.92, 0.86 + 0.08 * (max_mu - 0.75) / 0.25 - dom_nis_penalty)
         else:
-            self.p_stay = 0.88
+            self.p_stay = max(0.80, 0.86 - dom_nis_penalty)
         self._rebuild_tpm()
 
         # 4. Combined estimate with dominant-model bypass
@@ -1781,7 +1817,8 @@ class NxMimosaV40Sentinel:
 
     def _vs_adapt(self, pd):
         pref = pd.get("preferred_models", ALL_MODELS[:3])
-        na = list(set(["CV"]+pref)); na = [m for m in na if m in ALL_MODELS]
+        # CA is CORE — always active alongside CV (acceleration is too common to prune)
+        na = list(set(["CV", "CA"]+pref)); na = [m for m in na if m in ALL_MODELS]
         if set(na)==set(self.active_models):
             self._tpm_bias(pd); return
         old = dict(self.mu); self.active_models = na
@@ -1806,10 +1843,12 @@ class NxMimosaV40Sentinel:
 
     def _prune(self):
         if len(self.active_models)<=1: return
-        # During sustained benign flight, allow collapse to CV-only
-        min_models = 1 if self.benign_streak > 30 else 2
+        # During sustained benign flight, allow collapse to core set
+        CORE_MODELS = {"CV", "CA"}  # Never prune these
+        min_models = 2 if self.benign_streak > 30 else 2
         if len(self.active_models)<=min_models: return
-        rm = [m for m in self.active_models if self.mu.get(m,0)<self.prune_threshold and m!="CV"]
+        rm = [m for m in self.active_models
+              if self.mu.get(m,0)<self.prune_threshold and m not in CORE_MODELS]
         for m in rm:
             if len(self.active_models)<=min_models: break
             self.active_models.remove(m); del self.mu[m]
