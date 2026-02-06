@@ -622,7 +622,9 @@ class NxMimosaV40Sentinel:
                  window_size=30, prune_threshold=0.03,
                  initial_models=None, q_base=1.0):
         self.dt = dt; self.r_std = r_std
-        self.R = np.eye(2)*r_std**2
+        self.R_nominal = np.eye(2)*r_std**2   # [REQ-V41-07] Nominal R (never modified)
+        self.R = self.R_nominal.copy()          # Active R (ECM-boosted during jamming)
+        self.R_ecm_scale = 1.0                  # Current R boost factor
         self.window_size = window_size
         self.prune_threshold = prune_threshold
         self.q_base = q_base; self.q_scale = 1.0
@@ -640,6 +642,16 @@ class NxMimosaV40Sentinel:
         # [REQ-V41-01..06] v4.1 Multi-domain classifier pipeline
         self._cls_result = None  # Last ClassificationResult from pipeline
         self._ecm_q_scale = 1.0  # ECM-driven Q multiplier
+        # [REQ-V41-07] ECM-adaptive R matrix
+        self._ecm_r_scale = 1.0  # R boost factor (1.0 = nominal, up to 20x under jamming)
+        self._ecm_high_conf = False  # High-confidence ECM → force model activation
+        # [REQ-V41-08] Ghost track detection (multi-track explosion indicator)
+        self._ghost_track_count = 0  # Set externally by tracker manager
+        self._ecm_force_models = False  # True → override VS-IMM with CA/Jerk
+        # RF observable cache (set via set_rf_observables() before each update)
+        self._rf_snr_db = 25.0
+        self._rf_rcs_dbsm = 0.0
+        self._rf_doppler_hz = 0.0
         if _HAS_CLASSIFIER:
             # Resolve DB path for v3 (multi-domain, 111 platforms)
             _db_v3_candidates = [
@@ -945,9 +957,9 @@ class NxMimosaV40Sentinel:
                 speed_mps=sp, accel_g=ag, altitude_m=alt_m,
                 omega_radps=abs(self.omega), heading_rad=heading_rad,
                 vz_mps=vz_mps, nis_cv=cv_nis_inst,
-                rcs_dbsm=0.0,   # TODO: feed from radar front-end
-                snr_db=25.0,    # TODO: feed from radar front-end
-                doppler_hz=0.0, # TODO: feed from radar front-end
+                rcs_dbsm=self._rf_rcs_dbsm,
+                snr_db=self._rf_snr_db,
+                doppler_hz=self._rf_doppler_hz,
                 range_m=np.linalg.norm(xc[:2]),
             )
             self._cls_result = cls_result
@@ -957,8 +969,106 @@ class NxMimosaV40Sentinel:
             if hasattr(self.cls_pipeline, 'ecm_detector'):
                 self._ecm_q_scale = self.cls_pipeline.ecm_detector.q_scale_factor
             
+            # =================================================================
+            # [REQ-V41-07] ECM-Adaptive R Matrix Boost
+            # -----------------------------------------------------------------
+            # Under ECM, measurement noise INCREASES — filter must trust
+            # prediction more and measurement less. R boost is ECM-type-aware:
+            #   - Noise jamming → boost both range + angle (broadband corruption)
+            #   - RGPO/deception → boost range only (range gate pull-off)
+            #   - VGPO → boost Doppler/velocity only
+            #   - DRFM → moderate all-channel boost (smart repeater)
+            #   - Chaff → moderate boost (distributed false returns)
+            # Smooth transitions: fast ramp-up, slow decay (same as Q).
+            # =================================================================
+            ecm_det = self.cls_pipeline.ecm_detector if hasattr(self.cls_pipeline, 'ecm_detector') else None
+            if ecm_det and hasattr(ecm_det, 'status'):
+                ecm_status = ecm_det.status
+                ecm_conf = ecm_det.confidence if hasattr(ecm_det, 'confidence') else 0.0
+            else:
+                ecm_status = cls_result.ecm_status
+                ecm_conf = 0.0
+            
+            # Compute target R scale from ECM type + confidence
+            if _HAS_CLASSIFIER:
+                if ecm_status == ECMStatus.CLEAN:
+                    target_r_scale = 1.0
+                elif ecm_status in (ECMStatus.NOISE_JAMMING, ECMStatus.MULTI_SOURCE):
+                    # Broadband: all measurement channels degraded
+                    target_r_scale = 10.0 + 10.0 * min(ecm_conf, 1.0)  # 10-20x
+                elif ecm_status in (ECMStatus.DECEPTION_RGPO, ECMStatus.DECEPTION_VGPO):
+                    # Deception: specific channel corrupted, moderate overall boost
+                    target_r_scale = 5.0 + 10.0 * min(ecm_conf, 1.0)   # 5-15x
+                elif ecm_status == ECMStatus.DRFM_REPEATER:
+                    # Smart repeater: hard to distinguish from real — moderate boost
+                    target_r_scale = 8.0 + 12.0 * min(ecm_conf, 1.0)   # 8-20x
+                elif ecm_status == ECMStatus.CHAFF_CORRIDOR:
+                    # Chaff: distributed clutter — moderate boost
+                    target_r_scale = 3.0 + 7.0 * min(ecm_conf, 1.0)    # 3-10x
+                else:
+                    target_r_scale = 2.0
+            else:
+                target_r_scale = 1.0
+            
+            # Ghost track escalation: if tracker manager reports multi-track explosion
+            if self._ghost_track_count > 3:
+                target_r_scale = max(target_r_scale, 15.0)  # At least 15x
+                ecm_conf = max(ecm_conf, 0.7)               # Force high confidence
+            
+            # Asymmetric smoothing: fast up (0.5), slow down (0.92)
+            if target_r_scale > self._ecm_r_scale:
+                self._ecm_r_scale = 0.5 * self._ecm_r_scale + 0.5 * target_r_scale
+            else:
+                self._ecm_r_scale = 0.92 * self._ecm_r_scale + 0.08 * target_r_scale
+            self._ecm_r_scale = max(1.0, min(self._ecm_r_scale, 25.0))  # Clamp [1, 25]
+            
+            # Apply to active R matrix
+            self.R = self.R_nominal * self._ecm_r_scale
+            
+            # =================================================================
+            # [REQ-V41-08] ECM Forced Model Activation
+            # -----------------------------------------------------------------
+            # Under high-confidence ECM, the classifier may give wrong platform
+            # → wrong preferred_models. Override: force-activate CA + Jerk
+            # while KEEPING CV (most stable under measurement corruption).
+            # This ensures the filter can handle both benign (CV) and high-g
+            # (CA/Jerk) trajectories when we can't trust classification.
+            # =================================================================
+            self._ecm_high_conf = (self._ecm_r_scale > 5.0 or ecm_conf > 0.6)
+            
+            if self._ecm_high_conf:
+                # Force-activate higher-order models alongside CV
+                ecm_models = ["CV", "CA", "CT_plus", "CT_minus", "Jerk"]
+                ecm_models = [m for m in ecm_models if m in ALL_MODELS]
+                if set(ecm_models) != set(self.active_models):
+                    old_mu = dict(self.mu)
+                    self.active_models = ecm_models
+                    n = len(ecm_models)
+                    # Redistribute: give extra weight to CA/Jerk under ECM
+                    self.mu = {}
+                    for m in ecm_models:
+                        if m in ("CA", "Jerk"):
+                            self.mu[m] = max(old_mu.get(m, 0), 0.15)
+                        else:
+                            self.mu[m] = max(old_mu.get(m, 0), 0.05)
+                    t = sum(self.mu.values())
+                    self.mu = {m: p/t for m, p in self.mu.items()}
+                    # Initialize new models from best existing
+                    bm = max(old_mu, key=old_mu.get) if old_mu else "CV"
+                    for m in ecm_models:
+                        if old_mu.get(m, 0) < 0.01:
+                            self.x[m] = self._ms(self.x[bm], MODEL_DIMS[bm], MODEL_DIMS[m])
+                            self.P[m] = self._mc(self.P[bm], MODEL_DIMS[bm], MODEL_DIMS[m])
+                    self._rebuild_tpm()
+                    self.benign_streak = 0
+                    self._ecm_force_models = True
+            else:
+                self._ecm_force_models = False
+            
             # [REQ-V41-01] VS-IMM adapt from v4.1 classifier preferred_models
-            if cls_result.confidence >= 0.50 and self.step > 20:
+            # Only apply classifier-driven model selection when NOT in ECM override
+            if (cls_result.confidence >= 0.50 and self.step > 20
+                    and not self._ecm_force_models):
                 pref_v41 = cls_result.preferred_models
                 if pref_v41 and set(pref_v41) != set(self.active_models):
                     # Merge: v4.1 classifier overrides when confident
@@ -978,6 +1088,11 @@ class NxMimosaV40Sentinel:
                         self._rebuild_tpm()
         else:
             cls_result = None
+            # Decay R scale back to nominal when no pipeline
+            self._ecm_r_scale = 0.92 * self._ecm_r_scale + 0.08 * 1.0
+            if self._ecm_r_scale < 1.05:
+                self._ecm_r_scale = 1.0
+            self.R = self.R_nominal * self._ecm_r_scale
         
         # 6b. Emergency reactivation: if CV-only but velocity change is large
         if len(self.active_models) == 1 and self.active_models[0] == "CV":
@@ -1093,11 +1208,23 @@ class NxMimosaV40Sentinel:
             _alerts = list(cls_result.alerts)
             _is_false = _plat_class.startswith("false_target")
             
+            # [REQ-V41-07] Add R-scale and ECM force-model alerts
+            if self._ecm_r_scale > 3.0:
+                _alerts.append(f"ECM_R_BOOST_{self._ecm_r_scale:.0f}x")
+            if self._ecm_force_models:
+                _alerts.append("ECM_FORCED_MODEL_ACTIVATION")
+            if self._ghost_track_count > 3:
+                _alerts.append(f"GHOST_TRACKS_{self._ghost_track_count}")
+            
             # Upgrade threat from v4.1 if higher
             if hasattr(cls_result.threat_level, 'value'):
                 v41_thr = {0: 0.0, 1: 0.3, 2: 0.5, 3: 0.7, 4: 1.0}.get(
                     cls_result.threat_level.value, 0.5)
                 thr = max(thr, v41_thr)
+            
+            # [REQ-V41-07] ECM escalates threat
+            if self._ecm_high_conf:
+                thr = max(thr, 0.8)  # At least HIGH threat under confirmed ECM
         
         self.intent_state = IntentState(
             plat, cat, conf, phase, pc,
@@ -1154,6 +1281,57 @@ class NxMimosaV40Sentinel:
         if rm:
             t = sum(self.mu.values()); self.mu = {m:p/t for m,p in self.mu.items()}
             self._rebuild_tpm()
+
+    # =========================================================================
+    # [REQ-V41-07..08] ECM Robustness API
+    # =========================================================================
+    def set_ghost_track_count(self, count: int):
+        """Called by tracker manager when multi-track explosion detected.
+        
+        [REQ-V41-08] Ghost tracks indicate DRFM/deception ECM generating
+        false targets. When count > 3, ECM R-boost is escalated and
+        forced model activation triggers.
+        
+        Args:
+            count: Number of suspicious ghost tracks in current scan
+        """
+        self._ghost_track_count = count
+    
+    def set_rf_observables(self, snr_db: float = 25.0, rcs_dbsm: float = 0.0,
+                           doppler_hz: float = 0.0):
+        """Feed live RF observables from radar front-end.
+        
+        These replace the hardcoded defaults in the classifier pipeline call.
+        Call this before update() each cycle for accurate ECM detection.
+        
+        Args:
+            snr_db: Signal-to-noise ratio (dB)
+            rcs_dbsm: Radar cross section (dBsm)
+            doppler_hz: Doppler frequency (Hz)
+        """
+        self._rf_snr_db = snr_db
+        self._rf_rcs_dbsm = rcs_dbsm
+        self._rf_doppler_hz = doppler_hz
+    
+    @property
+    def ecm_state(self) -> dict:
+        """Current ECM state snapshot for operator display / alert.
+        
+        Returns:
+            dict with ecm_active, ecm_r_scale, ecm_q_scale, ecm_force_models,
+            ghost_track_count, active_models
+        """
+        return {
+            "ecm_active": self._ecm_r_scale > 2.0 or self._ecm_high_conf,
+            "ecm_r_scale": self._ecm_r_scale,
+            "ecm_q_scale": self._ecm_q_scale if isinstance(self._ecm_q_scale, (int, float)) else 1.0,
+            "ecm_force_models": self._ecm_force_models,
+            "ecm_high_conf": self._ecm_high_conf,
+            "ghost_track_count": self._ghost_track_count,
+            "active_models": list(self.active_models),
+            "r_matrix_diag": float(self.R[0, 0]),
+            "r_nominal_diag": float(self.R_nominal[0, 0]),
+        }
 
     # =========================================================================
     # Smoothers — Per-model RTS
