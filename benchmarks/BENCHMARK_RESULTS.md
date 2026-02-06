@@ -25,7 +25,7 @@ python benchmarks/open_benchmark.py
 | Stone Soup | 7.2 | 9.0 | 11.9 | 7.7 | 13.3 | 15.1 | 13.1 | **11.0** | **0/7** |
 | FilterPy | 7.7 | 9.7 | 15.1 | 42.5 | 12.3 | 8.3 | 17.8 | **16.2** | **0/7** |
 | PyKalman | 7.6 | 9.3 | 12.7 | 9.0 | 13.4 | 15.3 | 13.5 | **11.5** | **0/7** |
-| NX-MIMOSA v4.2 | **6.5** ★ | **8.2** ★ | **9.7** ★ | **4.9** ★ | **7.7** ★ | **7.3** ★ | **11.3** ★ | **8.0** | **7/7** |
+| NX-MIMOSA v4.2 | **6.2** ★ | **8.2** ★ | **9.7** ★ | **5.2** ★ | **8.0** ★ | **7.3** ★ | **11.3** ★ | **8.0** | **7/7** |
 
 ### Scenarios
 
@@ -43,6 +43,6 @@ NX-MIMOSA wins all scenarios.
 
 ### Head-to-Head
 
-- **vs Stone Soup**: avg +25.8% (range +8.9% to +51.7%)
-- **vs FilterPy**: avg +34.3% (range +11.3% to +88.5%)
-- **vs PyKalman**: avg +29.4% (range +12.1% to +52.1%)
+- **vs Stone Soup**: avg +25.4% (range +8.9% to +51.7%)
+- **vs FilterPy**: avg +34.4% (range +11.3% to +87.7%)
+- **vs PyKalman**: avg +29.1% (range +12.1% to +52.1%)

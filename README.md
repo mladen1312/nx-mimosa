@@ -40,19 +40,38 @@ Unlike generic tracking libraries, NX-MIMOSA dynamically adapts its motion model
 
 **Reproducible** — `pip install stonesoup filterpy pykalman numpy && python benchmarks/multi_domain_benchmark.py`
 
-Independent cross-domain evaluation with domain-appropriate sensor parameters (dt, R_std, Q):
+### Domain Preset API (NEW in v4.2.4)
+
+One parameter replaces manual Q/model tuning:
+
+```python
+# Automotive: 20Hz, sub-meter precision, fast brake/turn detection
+tracker = NxMimosaV40Sentinel(dt=0.05, r_std=0.3, domain="automotive")
+
+# Military: 10Hz, full 5-model bank, aggressive maneuver tracking
+tracker = NxMimosaV40Sentinel(dt=0.1, r_std=5.0, domain="military")
+
+# Space: 0.1Hz, orbital dynamics, ultra-stable prediction
+tracker = NxMimosaV40Sentinel(dt=10.0, r_std=100.0, domain="space")
+
+# Available: automotive|atc|aviation|military|space|robotics (+ aliases)
+```
+
+Each preset configures 15+ internal parameters: model bank, AOS thresholds, TPM, benign detection, Q scaling.
+
+### Results
 
 | Domain | Scenarios | dt | R_std | NX Wins | Description |
 |--------|---:|---:|---:|---:|---|
 | **ATC** | 4 | 4.0s | 50m | 3/4 | Enroute, holding, ILS, go-around |
 | **Aviation** | 3 | 1.0s | 15m | 3/3 | Wind shear, turbulence, TCAS RA |
 | **Military** | 4 | 0.1s | 5m | 4/4 | Intercept, SAM, cruise missile, helo NOE |
-| **Automotive** | 4 | 0.05s | 0.3m | 2/4 | Highway, intersection, e-brake, lane change |
+| **Automotive** | 4 | 0.05s | 0.3m | 3/4 | Highway, intersection, e-brake, lane change |
 | **Space** | 4 | 10s | 100m | 4/4 | LEO, GEO, orbital burn, reentry |
 
-**Grand totals:** NX-MIMOSA **16/19** wins | Stone Soup 1/19 | FilterPy 1/19 | PyKalman 1/19
+**Grand totals:** NX-MIMOSA **17/19** wins | Stone Soup 0/19 | FilterPy 1/19 | PyKalman 1/19
 
-**Where NX-MIMOSA loses** — ATC holding pattern (FilterPy IMM has domain-matched 3°/s CT omega: 56.5m vs NX 76.6m), urban intersection (Singer damped model optimal for stop-go: 0.21m vs NX 0.23m), and highway lane change (pure CV optimal for gentle sinusoidal: 0.18m vs NX 0.19m). All losses are scenarios where a simpler, domain-matched single filter is optimal. NX-MIMOSA dominates all high-dynamics and multi-regime scenarios. See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
+**Where NX-MIMOSA loses** — ATC holding pattern (FilterPy IMM has domain-matched 3°/s CT omega: 56.5m vs NX 76.6m) and highway lane change (pure CV optimal for gentle sinusoidal: 0.18m vs NX 0.20m, gap = 2cm). See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
 
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 

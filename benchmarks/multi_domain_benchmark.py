@@ -72,6 +72,7 @@ DOMAINS = {
         "q_ct": 0.05,
         "q_singer": 0.1,
         "nx_q_base": 0.05,
+        "nx_domain": "atc",
     },
     "AVIATION": {
         "dt": 1.0,        # ADS-B: 1s update
@@ -81,6 +82,7 @@ DOMAINS = {
         "q_ct": 0.2,
         "q_singer": 0.5,
         "nx_q_base": 0.2,
+        "nx_domain": "aviation",
     },
     "MILITARY": {
         "dt": 0.1,        # Military radar: 10 Hz track update
@@ -90,6 +92,7 @@ DOMAINS = {
         "q_ct": 1.0,
         "q_singer": 2.0,
         "nx_q_base": 1.0,
+        "nx_domain": "military",
     },
     "AUTOMOTIVE": {
         "dt": 0.05,       # Automotive radar: 20 Hz
@@ -99,6 +102,7 @@ DOMAINS = {
         "q_ct": 2.0,
         "q_singer": 5.0,
         "nx_q_base": 2.0,
+        "nx_domain": "automotive",
     },
     "SPACE": {
         "dt": 10.0,       # Space surveillance: 10s between measurements
@@ -108,6 +112,7 @@ DOMAINS = {
         "q_ct": 0.0005,
         "q_singer": 0.001,
         "nx_q_base": 0.001,
+        "nx_domain": "space",
     },
 }
 
@@ -657,12 +662,13 @@ def run_pykalman_ca(meas, dt, r_std, q):
     states, _ = kf.filter(meas[1:])
     return states[:, [0,3]]
 
-def run_nx_mimosa(meas, dt, r_std, q_base, models=None):
+def run_nx_mimosa(meas, dt, r_std, q_base, models=None, domain=None):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
     from nx_mimosa_v40_sentinel import NxMimosaV40Sentinel
-    if models is None:
+    if models is None and domain is None:
         models = ["CV", "CT_plus", "CT_minus", "CA", "Jerk"]
-    tracker = NxMimosaV40Sentinel(dt=dt, r_std=r_std, q_base=q_base, initial_models=models)
+    tracker = NxMimosaV40Sentinel(dt=dt, r_std=r_std, q_base=q_base,
+                                   initial_models=models, domain=domain)
     tracker.update(meas[0])
     est = []
     for i in range(1, len(meas)):
@@ -759,7 +765,8 @@ def run_scenario(sc: Scenario) -> Tuple[str, List[Metrics]]:
                                                 DOMAIN_CT_OMEGA[sc.domain])),
         ("PK CV",     lambda: run_pykalman_cv(meas, dt, r_std, dp["q_cv"])),
         ("PK CA",     lambda: run_pykalman_ca(meas, dt, r_std, dp["q_ca"])),
-        ("NX v4.2",   lambda: run_nx_mimosa(meas, dt, r_std, dp["nx_q_base"])),
+        ("NX v4.2",   lambda: run_nx_mimosa(meas, dt, r_std, dp["nx_q_base"],
+                                              domain=dp.get("nx_domain"))),
     ]
 
     results = []
@@ -834,7 +841,7 @@ def run_all():
     print(f"  Stone Soup = best of {{CV, CA, Singer}}")
     print(f"  FilterPy   = best of {{CV, IMM}}")
     print(f"  PyKalman   = best of {{CV, CA}}")
-    print(f"  NX-MIMOSA  = single VS-IMM config per domain\n")
+    print(f"  NX-MIMOSA  = domain preset per domain (auto-config model bank + AOS + Q)\n")
 
     header = f"  {'ID':<5} {'Scenario':<25} {'Domain':<10} {'SS best':>10} {'FP best':>10} {'PK best':>10} {'NX v4.2':>10} {'Winner':<12}"
     print(header)
@@ -925,7 +932,8 @@ def run_all():
     print("  - Stone Soup: best of 3 models (CV, CA, Singer) per scenario")
     print("  - FilterPy: best of 2 (CV, IMM with domain-matched omega)")
     print("  - PyKalman: best of 2 (CV, CA)")
-    print("  - NX-MIMOSA: ONE fixed 5-model VS-IMM per domain")
+    print("  - NX-MIMOSA: ONE domain preset per domain (domain= parameter)")
+    print("    Each preset auto-configures model bank, AOS, TPM, Q scaling")
     print("  - FilterPy IMM CT omega adapted per domain (generous)")
     print("  - No oracle info given to any tracker")
     print(f"\nReproduce: pip install stonesoup filterpy pykalman numpy")

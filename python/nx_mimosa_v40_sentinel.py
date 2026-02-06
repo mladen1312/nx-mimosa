@@ -1003,11 +1003,169 @@ class ParallelZFilter:
 # =============================================================================
 # NX-MIMOSA v4.0/4.1 SENTINEL — Main Tracker
 # =============================================================================
+# Domain Presets — single parameter configures all internals
+# =============================================================================
+DOMAIN_PRESETS = {
+    # ── AUTOMOTIVE / ROBOTICS ──
+    # High-rate (20-100Hz), low R (0.1-1m), targets: 0-50 m/s
+    # Priority: precision on straight, fast reaction to braking/turning
+    # Key: AOS should aggressively use CV on cruise, but instant IMM on maneuver
+    "automotive": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus"],  # No Jerk — overkill
+        "omega_init":    0.5,        # ~30°/s — typical intersection turn
+        "p_stay":        0.92,       # Moderate persistence — frequent mode changes
+        "q_cv_scale":    0.15,       # Low — automotive targets very predictable on road
+        "q_ca_scale":    0.6,        # Moderate — braking/accel well-modeled
+        "aos_benign_med": 3.5,       # Generous — most driving is benign
+        "aos_maneuver_p75": 5.0,     # Quick detect of braking/turning
+        "aos_maneuver_med": 4.0,
+        "aos_settle":    10,         # Fast settle — high update rate
+        "aos_window_s":  0.5,        # 0.5s window (10 steps at 20Hz)
+        "benign_dv_scale": 0.5,      # More sensitive benign detection
+        "benign_q_targets": [0.05, 0.10, 0.25],  # Aggressive q reduction
+        "benign_streaks":   [15, 8, 4],           # Faster activation
+        "mu_floor":      0.02,       # Slightly higher — fewer models
+        "nis_rebalance_thresh": 8.0, # React faster to prediction errors
+        "prune_base":    0.04,
+    },
+    # ── ATC (Air Traffic Control / Civil Aviation) ──
+    # Low-rate (4s SSR), high R (50m), targets: 50-250 m/s
+    # Priority: smooth tracks, minimal false alarms, handle holding patterns
+    # Key: standard rate turn = 3°/s, ILS = gentle deceleration
+    "atc": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus", "Jerk"],  # Full bank
+        "omega_init":    0.196,      # Keep default — adaptive will find 3°/s
+        "p_stay":        0.88,       # Standard — fast CV↔CT switching
+        "q_cv_scale":    0.025,
+        "q_ca_scale":    0.1,
+        "aos_benign_med": 3.0,
+        "aos_maneuver_p75": 6.0,
+        "aos_maneuver_med": 4.0,
+        "aos_settle":    20,         # 80s at 4s update — full holding legs before AOS
+        "aos_window_s":  80.0,       # 80s = 20 steps at 4s — match old min-20 behavior
+        "benign_dv_scale": 1.0,
+        "benign_q_targets": [0.10, 0.20, 0.45],  # Standard — don't over-reduce
+        "benign_streaks":   [25, 15, 8],
+        "mu_floor":      0.015,
+        "nis_rebalance_thresh": 12.0,
+        "prune_base":    0.03,
+    },
+    # ── AVIATION (Commercial / General) ──
+    # Medium rate (1s ADS-B), medium R (15m), targets: 50-300 m/s
+    # Priority: handle turbulence, wind shear, TCAS maneuvers
+    "aviation": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus", "Jerk"],
+        "omega_init":    0.196,      # Adaptive will tune down for gentle turns
+        "p_stay":        0.88,
+        "q_cv_scale":    0.1,        # q_base=0.2 * 0.5 = 0.1
+        "q_ca_scale":    0.4,        # q_base=0.2 * 2.0 = 0.4
+        "aos_benign_med": 3.0,
+        "aos_maneuver_p75": 5.5,
+        "aos_maneuver_med": 4.0,
+        "aos_settle":    20,
+        "aos_window_s":  20.0,       # 20s = 20 steps at 1s — match old behavior
+        "benign_dv_scale": 1.0,
+        "benign_q_targets": [0.10, 0.20, 0.45],
+        "benign_streaks":   [25, 15, 8],
+        "mu_floor":      0.015,
+        "nis_rebalance_thresh": 12.0,
+        "prune_base":    0.03,
+    },
+    # ── MILITARY / DEFENSE ──
+    # High-rate (10Hz), low R (5m), targets: 0-1000+ m/s, up to 9g
+    # Priority: NEVER miss a maneuver, agility > precision
+    # Key: all 5 models, fast mode switching, conservative AOS
+    "military": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus", "Jerk"],
+        "omega_init":    np.radians(5.0),  # Fighter-grade turns
+        "p_stay":        0.88,       # Lower — expect frequent mode changes
+        "q_cv_scale":    0.5,        # Standard — must handle anything
+        "q_ca_scale":    2.0,
+        "aos_benign_med": 2.5,       # Conservative — rarely trust CV
+        "aos_maneuver_p75": 5.0,
+        "aos_maneuver_med": 3.5,
+        "aos_settle":    20,
+        "aos_window_s":  2.0,
+        "benign_dv_scale": 1.5,      # Less sensitive — expect dynamics
+        "benign_q_targets": [0.10, 0.20, 0.45],
+        "benign_streaks":   [25, 15, 8],
+        "mu_floor":      0.015,
+        "nis_rebalance_thresh": 12.0,
+        "prune_base":    0.03,
+    },
+    # ── SPACE / ORBITAL ──
+    # Very low rate (10s), high R (100m), targets: 3-8 km/s, orbital mechanics
+    # Priority: stability, handle rare delta-v burns, orbital curvature
+    # Key: AOS should be very aggressive toward CV — orbits are predictable
+    "space": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus"],
+        "omega_init":    np.radians(0.01),
+        "p_stay":        0.95,
+        "q_cv_scale":    0.001,      # Match old computed: max(0.001*0.5, 0.001) = 0.001
+        "q_ca_scale":    0.01,
+        "aos_benign_med": 4.0,
+        "aos_maneuver_p75": 8.0,
+        "aos_maneuver_med": 5.0,
+        "aos_settle":    5,
+        "aos_window_s":  60.0,
+        "benign_dv_scale": 0.3,
+        "benign_q_targets": [0.0005, 0.001, 0.003],
+        "benign_streaks":   [10, 6, 3],
+        "mu_floor":      0.02,
+        "nis_rebalance_thresh": 10.0,
+        "prune_base":    0.03,
+    },
+    # ── ROBOTICS (Indoor/Warehouse) ──
+    # Very high rate (50-100Hz), very low R (0.05-0.3m), targets: 0-5 m/s
+    # Priority: cm-level precision, handle sudden stops, sharp turns
+    "robotics": {
+        "models":        ["CV", "CA", "CT_plus", "CT_minus"],
+        "omega_init":    1.0,        # ~57°/s — robots turn fast
+        "p_stay":        0.90,
+        "q_cv_scale":    0.05,
+        "q_ca_scale":    0.3,
+        "aos_benign_med": 3.5,
+        "aos_maneuver_p75": 5.0,
+        "aos_maneuver_med": 4.0,
+        "aos_settle":    15,
+        "aos_window_s":  0.3,        # 300ms window
+        "benign_dv_scale": 0.3,      # Very sensitive — slow targets
+        "benign_q_targets": [0.02, 0.05, 0.15],
+        "benign_streaks":   [20, 10, 5],
+        "mu_floor":      0.02,
+        "nis_rebalance_thresh": 8.0,
+        "prune_base":    0.04,
+    },
+}
+# Aliases
+DOMAIN_PRESETS["auto"] = DOMAIN_PRESETS["automotive"]
+DOMAIN_PRESETS["car"] = DOMAIN_PRESETS["automotive"]
+DOMAIN_PRESETS["defense"] = DOMAIN_PRESETS["military"]
+DOMAIN_PRESETS["mil"] = DOMAIN_PRESETS["military"]
+DOMAIN_PRESETS["air"] = DOMAIN_PRESETS["aviation"]
+DOMAIN_PRESETS["leo"] = DOMAIN_PRESETS["space"]
+DOMAIN_PRESETS["orbital"] = DOMAIN_PRESETS["space"]
+DOMAIN_PRESETS["robot"] = DOMAIN_PRESETS["robotics"]
+DOMAIN_PRESETS["warehouse"] = DOMAIN_PRESETS["robotics"]
+DOMAIN_PRESETS["agv"] = DOMAIN_PRESETS["robotics"]
+
+# =============================================================================
 class NxMimosaV40Sentinel:
     def __init__(self, dt=0.1, r_std=2.5, platform_db_path=None,
                  window_size=30, prune_threshold=0.03,
-                 initial_models=None, q_base=1.0):
+                 initial_models=None, q_base=1.0, domain=None):
         self.dt = dt; self.r_std = r_std
+        self.domain = domain  # None = legacy behavior (auto-detect)
+        
+        # [REQ-V42-DOMAIN] Apply domain preset if specified
+        self._dp = {}  # Domain preset dict
+        if domain and domain.lower() in DOMAIN_PRESETS:
+            self._dp = DOMAIN_PRESETS[domain.lower()].copy()
+            if initial_models is None:
+                initial_models = self._dp["models"]
+        elif domain and domain.lower() not in DOMAIN_PRESETS:
+            raise ValueError(f"Unknown domain '{domain}'. Available: {list(DOMAIN_PRESETS.keys())}")
+        
         self.R_nominal = np.eye(2)*r_std**2   # [REQ-V41-07] Nominal R (never modified)
         self.R = self.R_nominal.copy()          # Active R (ECM-boosted during jamming)
         self.R_ecm_scale = 1.0                  # Current R boost factor
@@ -1019,8 +1177,9 @@ class NxMimosaV40Sentinel:
         self.x = {m: np.zeros(MODEL_DIMS[m]) for m in ALL_MODELS}
         self.P = {m: np.eye(MODEL_DIMS[m])*100 for m in ALL_MODELS}
         self.mu = {m: 1/len(self.active_models) for m in self.active_models}
-        self.p_stay = 0.88; self.tpm = {}; self._rebuild_tpm()
-        self.omega = 0.196
+        self.p_stay = self._dp.get("p_stay", 0.88); self.tpm = {}; self._rebuild_tpm()
+        self.omega = self._dp.get("omega_init", 0.196)
+        self.prune_threshold = self._dp.get("prune_base", prune_threshold)
         self.identifier = PlatformIdentifier(self.platform_db)
         self.intent_pred = IntentPredictor()
         self.intent_state = IntentState()
@@ -1081,19 +1240,13 @@ class NxMimosaV40Sentinel:
         # --- Parallel CV filter (domain-adaptive Q) ---
         self._cv_F = np.array([[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]])
         self._cv_H = np.array([[1,0,0,0],[0,1,0,0]], dtype=float)
-        # [REQ-V42-PRECISION] Scale parallel CV process noise with q_base
-        # This ensures domain-appropriate precision:
-        #   Military (q_base=1.0):   q_cv=0.5  — same as Stone Soup default
-        #   ATC (q_base=0.05):       q_cv=0.025 — low for predictable enroute
-        #   Automotive (q_base=2.0): q_cv=0.5  — capped, automotive R is tiny
-        #   Space (q_base=0.001):    q_cv=0.0005 — orbital mechanics
-        # The key ratio is Q/R — we want parallel CV to match standalone CV
-        # performance so AOS can fully delegate to it on benign targets.
-        q_cv = min(max(q_base * 0.5, 0.001), 0.5)
-        # For high-rate low-R sensors (automotive/robotics), scale Q relative to R
-        # but don't go too low — need to handle occasional dynamics
-        if r_std < 1.0:
-            q_cv = min(q_cv, r_std * 0.5)  # Moderate reduction, not extreme
+        # [REQ-V42-DOMAIN] Scale parallel CV process noise from domain preset or q_base
+        if "q_cv_scale" in self._dp:
+            q_cv = self._dp["q_cv_scale"]
+        else:
+            q_cv = min(max(q_base * 0.5, 0.001), 0.5)
+            if r_std < 1.0:
+                q_cv = min(q_cv, r_std * 0.5)
         self._cv_q_value = q_cv  # Store for diagnostics
         self._cv_Q = np.zeros((4,4))
         for i in [0,1]:  # x and y axes
@@ -1115,10 +1268,13 @@ class NxMimosaV40Sentinel:
         self._ca_F[1,3]=dt; self._ca_F[1,5]=dt**2/2
         self._ca_F[2,4]=dt; self._ca_F[3,5]=dt
         self._ca_H = np.zeros((2,6)); self._ca_H[0,0]=1; self._ca_H[1,1]=1
-        # [REQ-V42-PRECISION] Scale parallel CA Q with q_base
-        q_ca = min(max(q_base * 2.0, 0.01), 5.0)
-        if r_std < 1.0:
-            q_ca = min(q_ca, r_std * 2.0)  # Moderate reduction
+        # [REQ-V42-DOMAIN] Scale parallel CA Q from domain preset or q_base
+        if "q_ca_scale" in self._dp:
+            q_ca = self._dp["q_ca_scale"]
+        else:
+            q_ca = min(max(q_base * 2.0, 0.01), 5.0)
+            if r_std < 1.0:
+                q_ca = min(q_ca, r_std * 2.0)
         self._ca_q_value = q_ca  # Store for diagnostics
         self._ca_Q = np.zeros((6,6))
         for i in [0,1]:  # x and y axes
@@ -1316,7 +1472,8 @@ class NxMimosaV40Sentinel:
         if self.step > 15:
             # Benign detection: low dynamics AND low NIS
             speed_est = np.linalg.norm(v_now) if self.xc_h else 100.0
-            dv_thresh = max(3.0, speed_est * 0.008)  # 0.8% of speed or 3 m/s²
+            _benign_dv_scale = self._dp.get("benign_dv_scale", 1.0)
+            dv_thresh = max(3.0 * _benign_dv_scale, speed_est * 0.008 * _benign_dv_scale)
             
             if self.dv_ema < dv_thresh and self.nis_avg < 5.0:
                 self.benign_streak += 1
@@ -1324,15 +1481,17 @@ class NxMimosaV40Sentinel:
                 self.benign_streak = max(0, self.benign_streak - 5)  # Fast exit
             
             # Progressive q_base reduction during benign flight
-            if self.benign_streak > 25:
-                target_q = 0.10  # Ultra-low: pure CV tracking
+            # [REQ-V42-DOMAIN] Use domain-specific thresholds and targets
+            _bstreaks = self._dp.get("benign_streaks", [25, 15, 8])
+            _btargets = self._dp.get("benign_q_targets", [0.10, 0.20, 0.45])
+            if self.benign_streak > _bstreaks[0]:
+                target_q = _btargets[0]
                 self.q_base = max(target_q, self.q_base * 0.88)
-            elif self.benign_streak > 15:
-                target_q = 0.20  # Low: gentle turns only
-                decay = 0.92
-                self.q_base = max(target_q, self.q_base * decay)
-            elif self.benign_streak > 8:
-                target_q = 0.45
+            elif self.benign_streak > _bstreaks[1]:
+                target_q = _btargets[1]
+                self.q_base = max(target_q, self.q_base * 0.92)
+            elif self.benign_streak > _bstreaks[2]:
+                target_q = _btargets[2]
                 self.q_base = max(target_q, self.q_base * 0.95)
             else:
                 # Recover q_base when dynamics return
@@ -1346,7 +1505,7 @@ class NxMimosaV40Sentinel:
         for m in self.active_models: self.mu[m] /= ms
 
         # 3b. Mode probability floor — prevent model death (Bar-Shalom IMM robustification)
-        MU_FLOOR = 0.015
+        MU_FLOOR = self._dp.get("mu_floor", 0.015)
         n_active = len(self.active_models)
         floor_total = MU_FLOOR * n_active
         if floor_total < 1.0:  # sanity
@@ -1365,10 +1524,11 @@ class NxMimosaV40Sentinel:
         #     boost alternatives to allow faster mode switching
         dom_model = max(self.active_models, key=lambda m: self.mu[m])
         dom_nis = nis_models.get(dom_model, 0)
-        if dom_nis > 12.0 and self.mu[dom_model] > 0.5 and self.step > 10:
+        _nis_rebal = self._dp.get("nis_rebalance_thresh", 12.0)
+        if dom_nis > _nis_rebal and self.mu[dom_model] > 0.5 and self.step > 10:
             # Dominant model is clearly wrong — redistribute some probability
             # Scale: NIS=12 → mild (5%), NIS=30+ → strong (25%)
-            transfer_frac = min(0.25, 0.05 * (dom_nis - 12.0) / 10.0 + 0.05)
+            transfer_frac = min(0.25, 0.05 * (dom_nis - _nis_rebal) / 10.0 + 0.05)
             transfer = self.mu[dom_model] * transfer_frac
             self.mu[dom_model] -= transfer
             others = [m for m in self.active_models if m != dom_model]
@@ -1751,10 +1911,10 @@ class NxMimosaV40Sentinel:
         Si_cv = safe_inv(S_cv)
         cv_nis_raw = float(nu_cv @ Si_cv @ nu_cv)
         self._cv_nis = 0.85 * self._cv_nis + 0.15 * cv_nis_raw
-        # AOS sliding window: keep last N raw CV NIS values for median-based selection
-        # Window = 2 seconds of history, min 20 steps (prevents premature CV
-        # switching on slow-update radars where holding pattern turns are long)
-        AOS_WINDOW = max(20, min(60, int(2.0 / max(self.dt, 0.01))))
+        # AOS sliding window: domain-adaptive size
+        # [REQ-V42-DOMAIN] Use domain preset for window duration
+        _aos_window_s = self._dp.get("aos_window_s", 2.0)
+        AOS_WINDOW = max(8, min(60, int(_aos_window_s / max(self.dt, 0.01))))
         self._aos_nis_window.append(cv_nis_raw)
         if len(self._aos_nis_window) > AOS_WINDOW:
             self._aos_nis_window.pop(0)
@@ -1814,10 +1974,11 @@ class NxMimosaV40Sentinel:
         #   - AOS alpha ramps from 0→1 smoothly as NIS approaches chi²(2) median
         #   - Full CV pass-through (alpha=1.0) when median NIS ≈ 1.4
         # =====================================================================
-        AOS_BENIGN_MEDIAN = 3.0   # Median below this: strong evidence of benign
-        AOS_MANEUVER_P75 = 6.0    # P75 above this: maneuver detected
-        AOS_MANEUVER_MED = 4.0    # Median above this: definitely not benign
-        AOS_SETTLE = max(10, AOS_WINDOW)  # Faster settle for high-rate
+        # [REQ-V42-DOMAIN] AOS thresholds from domain preset
+        AOS_BENIGN_MEDIAN = self._dp.get("aos_benign_med", 3.0)
+        AOS_MANEUVER_P75 = self._dp.get("aos_maneuver_p75", 6.0)
+        AOS_MANEUVER_MED = self._dp.get("aos_maneuver_med", 4.0)
+        AOS_SETTLE = max(self._dp.get("aos_settle", 10), AOS_WINDOW)
         
         if self.step > AOS_SETTLE and np.all(np.isfinite(self._cv_x)) \
                 and len(self._aos_nis_window) >= 8:
