@@ -21,15 +21,20 @@ NX-MIMOSA is a **production-grade radar target tracker** that combines an Intera
 
 Unlike generic tracking libraries, NX-MIMOSA dynamically adapts its motion model bank based on *what* it's tracking — a fighter jet gets CT/Jerk models activated; a cruise missile gets CA/Ballistic models; a commercial airliner collapses to CV-only for minimum noise.
 
-## Performance
+## Performance — Open Benchmark (v4.2)
 
-8/8 scenario wins against **both** FilterPy IMM and Stone Soup 1.8 oracle (best-of-5 trackers per scenario):
+**Reproducible** — `pip install stonesoup filterpy pykalman numpy && python benchmarks/open_benchmark.py`
 
-| Metric | NX-MIMOSA | Competitor | Improvement |
-|--------|-----------|------------|-------------|
-| vs FilterPy IMM | 6.46m avg | 60.12m avg | **+89.3%** |
-| vs Stone Soup BEST oracle | 6.46m avg | 12.06m avg | **+46.4%** |
-| vs Stone Soup UKF-CA (fair) | 10.33m avg | 14.35m avg | **+28.0%** |
+7 standard tracking scenarios, 4 libraries (8 tracker configs), fixed seed=42, identical noise:
+
+| Library | CV | Gentle Turn | Hard Turn | Accel | Dogfight | Jinking | Ballistic | **AVG** | **Wins** |
+|---------|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Stone Soup (best of CV/CA/Singer) | 7.2 | 9.0 | 11.9 | **7.7** ★ | 13.3 | 15.1 | 13.1 | **11.0** | **1/7** |
+| FilterPy (best of CV/IMM) | 7.7 | 9.7 | 15.1 | 42.5 | 12.3 | 8.3 | 17.8 | **16.2** | **0/7** |
+| PyKalman (best of CV/CA) | 7.6 | 9.3 | 12.7 | 9.0 | 13.4 | 15.3 | 13.5 | **11.5** | **0/7** |
+| **NX-MIMOSA v4.2** | **6.5** ★ | **8.2** ★ | **10.2** ★ | 25.6 | **7.6** ★ | **7.4** ★ | **11.3** ★ | **10.9** | **6/7** |
+
+**Honest disclosure:** NX-MIMOSA loses Scenario 4 (Acceleration) to Stone Soup KF-CA by 230% — pure constant-acceleration is tailor-made for dedicated CA models. NX-MIMOSA's IMM splits probability across 5 models. See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology and per-tracker detail.
 
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 
