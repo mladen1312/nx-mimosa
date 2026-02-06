@@ -1,1 +1,0 @@
-"""NX-MIMOSA Cocotb Testbenches."""

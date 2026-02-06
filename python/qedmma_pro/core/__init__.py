@@ -1,1 +1,0 @@
-"""QEDMMA-PRO Core"""
