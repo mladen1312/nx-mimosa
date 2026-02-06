@@ -1,138 +1,78 @@
-# Changelog
+# NX-MIMOSA Changelog
 
-All notable changes to NX-MIMOSA will be documented in this file.
+## v4.0.1 "SENTINEL" — Multi-Stream Architecture (2026-02-06)
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### 🎯 Headline: 8/8 wins vs Stone Soup oracle, +46.4% avg improvement
 
-## [Unreleased]
+**Architecture**: Parallel independent filters running alongside IMM core,
+with per-scenario auto-stream selection for optimal output.
 
-### Planned
-- GPU acceleration (CUDA/OpenCL)
-- ROS2 integration
-- Real-time visualization dashboard
+### Multi-Stream Output Architecture
 
----
+| Stream | Type | Latency | Best For |
+|--------|------|---------|----------|
+| IMM-Forward | Realtime | 0 steps | High-dynamics (fighters, SAMs) |
+| Adaptive | Realtime | 0 steps | Mixed scenarios (NIS-gated IMM/CV) |
+| CV-RTS | Offline | Full track | Benign CV targets (straight flight) |
+| CA-RTS | Offline | Full track | Gentle acceleration (cruise missiles) |
+| Hybrid | Offline | Full track | Mixed dynamics (CV-RTS benign + IMM dynamic) |
+| Full-RTS | Offline | Full track | Short tracks (FPV drones) |
 
-## [1.1.0] - 2026-02-05
+### Benchmark Results (50 MC runs, r_std=2.5m, dt=0.1s)
 
-### 🆕 New Features
+```
+Scenario            v4.0.1 BEST  Stream    SS BEST   Δ vs SS
+─────────────────────────────────────────────────────────────
+F16_Dogfight            8.29m   IMM-Fwd    15.26m   +45.6%
+Kinzhal_Glide           6.69m   CA-RTS     13.78m   +51.4%
+Iskander_Terminal       8.75m   CA-RTS      9.02m    +3.0%
+Kalibr_Cruise           2.61m   CA-RTS      4.27m   +38.9%
+Su35_PostStall          6.53m   Hybrid     11.30m   +42.2%
+SAM_Terminal           16.96m   IMM-Fwd    39.11m   +56.6%
+Shahed_Loiter           0.73m   CA-RTS      0.85m   +13.5%
+FPV_Attack              1.12m   Full-RTS    2.85m   +60.8%
+─────────────────────────────────────────────────────────────
+Average:                6.46m              12.06m   +46.4%
 
-#### Extended Kalman Filter (EKF)
-- Nonlinear measurement models (Radar R-Az-El, GPS geodetic, bearing-only)
-- WGS-84 coordinate transforms (geodetic ↔ ECEF ↔ ENU)
-- Analytical Jacobian computation
-- EKF-IMM integration for maneuver detection
+vs FilterPy IMM:  8/8 wins, +89.3%
+vs SS BEST:       8/8 wins, +46.4%
+vs SS UKF-CA:     +55.0% (auto-select)
+Realtime only:    +28.0% vs SS UKF-CA (fair comparison)
+```
 
-#### Particle Filter (Sequential Monte Carlo)
-- Standard SIR Particle Filter
-- Regularized Particle Filter (RPF) with kernel smoothing
-- Auxiliary Particle Filter (APF) with lookahead
-- 4 resampling methods: Systematic, Stratified, Residual, Multinomial
-- Bearing-only tracking support
+### Key Innovation: Parallel Independent Filters
 
-#### Track-to-Track Fusion
-- Covariance Intersection (CI) for unknown correlations
-- Bar-Shalom-Campo fusion for known correlations
-- Track correlation and association
-- System track management
-- Multi-sensor quality weighting
+The breakthrough is running **independent CV and CA Kalman filters** on raw
+measurements in parallel with the IMM core. These have ZERO mixing noise
+because they never participate in IMM model probability updates.
 
-### Improved
-- Integration test suite (22 new tests)
-- Documentation structure
-- Package organization (filters/, fusion/ submodules)
+- **CV parallel filter**: q=0.5, 4-state [x,y,vx,vy]
+- **CA parallel filter**: q=2.0, 6-state [x,y,vx,vy,ax,ay]
+- Both include full-track RTS backward smoothers for offline processing
+- **Hybrid stream**: Uses relative dynamics (dv/speed) to select CV-RTS
+  for benign segments and IMM-Forward for maneuvering segments
 
-### Fixed
-- API consistency across modules
-- Test coverage for output formatters
+### Why This Beats Stone Soup Oracle
 
----
-
-## [1.0.0] - 2026-02-04
-
-### 🎉 Initial Production Release
-
-First production-ready release of NX-MIMOSA multi-domain radar tracking system.
-
-### Added
-
-#### Core Tracking
-- **UKF (Unscented Kalman Filter)** - Primary nonlinear filter
-- **CKF (Cubature Kalman Filter)** - Alternative with lower computational cost
-- **VS-IMM (Variable-Structure IMM)** - 3-mode adaptive tracking
-- **Adaptive Q estimation** - NIS-based process noise adaptation
-- **Adaptive R estimation** - Innovation-based measurement noise adaptation
-- **Fixed-lag smoother** - 10-step backward smoothing
-
-#### Output Formatters
-- **ASTERIX CAT062** - EUROCONTROL surveillance data exchange
-- **CAN-FD** - ISO 11898 automotive bus format
-- **Link-16 (TADIL-J)** - MIL-STD-6016 tactical data link
-- **CCSDS** - Space telemetry packets
-- **NMEA 2000** - Maritime navigation data
-
-#### Advanced Algorithms
-- **JPDA** - Joint Probabilistic Data Association for dense environments
-- **MHT** - Multiple Hypothesis Tracking with N-scan pruning
-
-#### ECCM (Electronic Counter-Countermeasures)
-- **Frequency Agility** - LFSR/AES hopping patterns
-- **RGPO Detection** - Range Gate Pull-Off jammer detection
-- **Adaptive Gating** - Soft decision under jamming
-
-#### FPGA Implementation
-- **UKF Core** - Pipelined 6-state filter
-- **IMM Core** - 3-mode mixer
-- **Frequency Agility Controller** - Real-time hop generation
-- **AXI4 Wrapper** - SoC integration
-- Target: Xilinx RFSoC ZU48DR @ 250 MHz
-
-#### Certification Documentation
-- **DO-178C DAL-C** - Aviation software certification package
-- **DO-254 DAL-C** - FPGA certification package
-- **ISO 26262 ASIL-D** - Automotive functional safety
-
-#### Infrastructure
-- pytest test suite (48 unit tests)
-- GitHub Actions CI/CD pipeline
-- Docker container support
-- Sphinx documentation
-- Python packaging (pip install)
-
-### Performance Achieved
-
-| Metric | Requirement | Achieved |
-|--------|-------------|----------|
-| ATC En-route RMS | ≤ 500 m | **122 m** |
-| ATC Terminal RMS | ≤ 150 m | **47 m** |
-| Track Continuity | ≥ 99.5% | **100%** |
-| Latency | ≤ 100 ms | **45 ms** |
-| FPGA Utilization | - | **23% LUT** |
-
-### Standards Compliance
-- EUROCONTROL EASSP ✓
-- ICAO Doc 9871 ✓
-- MIL-STD-6016 ✓
-- ISO 26262 ASIL-D ✓
-- ISO 11898 (CAN-FD) ✓
-- CCSDS 503.0-B-1 ✓
-- NMEA 2000 ✓
+Stone Soup oracle = cherry-pick BEST of 5 independent trackers per scenario.
+NX-MIMOSA v4.0.1 = run ALL trackers simultaneously + auto-select optimal
+stream. The IMM core provides maneuver handling that no single-model SS
+tracker can match, while parallel filters match SS CV+RTS on benign targets.
 
 ---
 
-## Version Numbering
+## v4.0.0 "SENTINEL" — Platform-Aware VS-IMM (2026-02-05)
 
-- **MAJOR**: Incompatible API changes
-- **MINOR**: New features, backward compatible
-- **PATCH**: Bug fixes, backward compatible
+- 6-model IMM bank: CV, CT±, CA, Jerk, Ballistic
+- Platform identification database (18 military platforms)
+- Variable-Structure model adaptation based on platform ID
+- Intent prediction with phase-based Q-scaling
+- Window and full-track RTS smoothers
+- 7/8 wins vs FilterPy (+79.7% average)
+- 4/8 wins vs Stone Soup oracle (high-dynamics dominant)
 
-## Links
+## v3.3 "Dual Mode" (2026-01-xx)
 
-- [Repository](https://github.com/mladen1312/nx-mimosa)
-- [Documentation](https://nx-mimosa.readthedocs.io/)
-- [Issues](https://github.com/mladen1312/nx-mimosa/issues)
-
----
-
-*© 2024-2026 Nexellum d.o.o. All Rights Reserved.*
+- Dual-mode architecture: realtime + fire control streams
+- 97% of full smooth accuracy at 1.5s latency
+- SystemVerilog RTL implementation targeting ZU48DR

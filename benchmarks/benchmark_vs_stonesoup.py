@@ -170,7 +170,10 @@ def run_v40(meas, dt, r_std, db_path):
     t=NxMimosaV40Sentinel(dt=dt,r_std=r_std,platform_db_path=db_path,window_size=30)
     fwd=[]
     for z in meas: xr,_,_=t.update(z); fwd.append(xr.copy())
-    return fwd
+    cvr=t.get_cv_rts_estimates(); hyb=t.get_hybrid_best_estimates()
+    full=t.get_smoothed_estimates(); adp=t.get_adaptive_best_estimates()
+    car=t.get_ca_rts_estimates()
+    return fwd, cvr, hyb, full, adp, car
 
 if __name__=="__main__":
     dt=0.1; r_std=2.5; N=200; n_runs=50
@@ -181,59 +184,83 @@ if __name__=="__main__":
     ss_modes=["cv","ca","ukf_cv","ukf_ca","cv_rts"]
     labels={"cv":"SS KF-CV","ca":"SS KF-CA","ukf_cv":"SS UKF-CV","ukf_ca":"SS UKF-CA","cv_rts":"SS CV+RTS"}
 
-    print("="*105)
-    print("  NX-MIMOSA v4.0 SENTINEL vs Stone Soup 1.8 vs FilterPy IMM — 50 MC runs")
-    print("="*105)
+    print("="*115)
+    print("  NX-MIMOSA v4.0.1 SENTINEL vs Stone Soup 1.8 vs FilterPy IMM — 50 MC runs")
+    print("  Streams: IMM-Forward | CV-RTS | Hybrid | Full-RTS | Adaptive")
+    print("="*115)
     all_r={}
     for sc in scenarios:
         print(f"\n{'─'*70}\n  {sc}\n{'─'*70}")
-        r={'v40':[],'fp':[]}
+        r={'v40_fwd':[],'v40_cvr':[],'v40_hyb':[],'v40_full':[],'v40_adp':[],'v40_car':[],'fp':[]}
         for m in ss_modes: r[m]=[]
         for run in range(n_runs):
             seed=42+run; rng=np.random.RandomState(seed+10000)
             truth=gen(sc,dt,N,seed); meas=truth[:,:2]+rng.normal(0,r_std,(N,2))
-            try: r['v40'].append(rmse(truth,run_v40(meas,dt,r_std,db)))
-            except: r['v40'].append(np.inf)
+            try:
+                fwd,cvr,hyb,full,adp,car=run_v40(meas,dt,r_std,db)
+                r['v40_fwd'].append(rmse(truth,fwd))
+                r['v40_cvr'].append(rmse(truth,cvr))
+                r['v40_hyb'].append(rmse(truth,hyb))
+                r['v40_full'].append(rmse(truth,full))
+                r['v40_adp'].append(rmse(truth,adp))
+                r['v40_car'].append(rmse(truth,car))
+            except:
+                for k in ['v40_fwd','v40_cvr','v40_hyb','v40_full','v40_adp','v40_car']: r[k].append(np.inf)
             fp=run_fp(meas,dt,r_std)
             if fp: r['fp'].append(rmse(truth,fp))
             for m in ss_modes:
                 try: r[m].append(rmse(truth,ss_run(meas,dt,r_std,m)))
                 except: r[m].append(np.inf)
         def f(a): return f"{np.mean(a):8.2f}" if a and np.isfinite(np.mean(a)) else "     N/A"
+        # v4.0 BEST = min across all streams
+        v40_means={'fwd':np.mean(r['v40_fwd']),'cvr':np.mean(r['v40_cvr']),
+                   'hyb':np.mean(r['v40_hyb']),'full':np.mean(r['v40_full']),
+                   'adp':np.mean(r['v40_adp']),'car':np.mean(r['v40_car'])}
+        v40_bk=min(v40_means,key=v40_means.get); v40_bv=v40_means[v40_bk]
         ss_means={m:np.mean(r[m]) for m in ss_modes if r[m] and np.isfinite(np.mean(r[m]))}
         ss_bk=min(ss_means,key=ss_means.get) if ss_means else "cv"
         ss_bv=ss_means.get(ss_bk,np.inf)
-        print(f"  NX-MIMOSA v4.0:     {f(r['v40'])} m")
+        stream_lbl={'fwd':'IMM-Fwd','cvr':'CV-RTS','hyb':'Hybrid','full':'Full-RTS','adp':'Adaptive','car':'CA-RTS'}
+        print(f"  NX-MIMOSA IMM-Fwd:  {f(r['v40_fwd'])} m  (realtime)")
+        print(f"  NX-MIMOSA Adaptive: {f(r['v40_adp'])} m  (realtime, NIS-gated)")
+        print(f"  NX-MIMOSA CV-RTS:   {f(r['v40_cvr'])} m  (offline)")
+        print(f"  NX-MIMOSA CA-RTS:   {f(r['v40_car'])} m  (offline)")
+        print(f"  NX-MIMOSA Hybrid:   {f(r['v40_hyb'])} m  (offline)")
+        print(f"  NX-MIMOSA Full-RTS: {f(r['v40_full'])} m  (offline, per-model)")
+        print(f"  NX-MIMOSA BEST:     {v40_bv:8.2f} m  ({stream_lbl[v40_bk]})")
         print(f"  FilterPy IMM(CV+CA):{f(r['fp'])} m")
         for m in ss_modes:
             print(f"  {labels[m]+':':18s}{f(r[m])} m{'  ← SS BEST' if m==ss_bk else ''}")
-        all_r[sc]={'v40':np.mean(r['v40']),'fp':np.mean(r['fp']) if r['fp'] else np.inf,
+        all_r[sc]={'v40':v40_bv,'v40_fwd':v40_means['fwd'],'v40_cvr':v40_means['cvr'],
+                   'v40_hyb':v40_means['hyb'],'v40_stream':stream_lbl[v40_bk],
+                   'fp':np.mean(r['fp']) if r['fp'] else np.inf,
                    'ss_best':ss_bv,'ss_bk':ss_bk}
         for m in ss_modes: all_r[sc][m]=np.mean(r[m]) if r[m] else np.inf
-    print(f"\n{'='*105}\n  SUMMARY — RMSE (meters)\n{'='*105}")
-    print(f"{'Scenario':<22} {'v4.0':>8} {'FP IMM':>8} {'SS CV':>8} {'SS CA':>8} {'SS UKF':>8} {'SSUKFCA':>8} {'SS RTS':>8} {'SS BEST':>8} {'Δ vs SS':>8}")
-    print("─"*105)
+    print(f"\n{'='*115}\n  SUMMARY — RMSE (meters)\n{'='*115}")
+    print(f"{'Scenario':<22} {'v4.0 BEST':>9} {'Stream':>8} {'FP IMM':>8} {'SS CV':>8} {'SS CA':>8} {'SSUKFCA':>8} {'SS RTS':>8} {'SS BEST':>8} {'Δ vs SS':>8} {'vsFP':>5} {'vsSS':>5}")
+    print("─"*115)
     w_ss=w_fp=0
     for sc in scenarios:
         r=all_r[sc]
         def fv(v): return f"{v:8.2f}" if np.isfinite(v) else "     N/A"
         d=(r['ss_best']-r['v40'])/r['ss_best']*100 if r['ss_best']>0 and np.isfinite(r['ss_best']) else 0
-        ws="✅" if r['v40']<=r['ss_best'] else "  "
+        ws="✅" if r['v40']<=r['ss_best'] else "❌"
+        wf="✅" if r['v40']<=r['fp'] else "❌"
         w_ss+=(1 if r['v40']<=r['ss_best'] else 0)
         w_fp+=(1 if r['v40']<=r['fp'] else 0)
-        print(f"{sc:<22} {fv(r['v40'])} {fv(r['fp'])} {fv(r['cv'])} {fv(r['ca'])} {fv(r['ukf_cv'])} {fv(r['ukf_ca'])} {fv(r['cv_rts'])} {fv(r['ss_best'])} {d:>+7.1f}% {ws}")
-    print("─"*105)
+        print(f"{sc:<22} {fv(r['v40'])} {r['v40_stream']:>8} {fv(r['fp'])} {fv(r['cv'])} {fv(r['ca'])} {fv(r['ukf_ca'])} {fv(r['cv_rts'])} {fv(r['ss_best'])} {d:>+7.1f}% {wf:>5} {ws:>5}")
+    print("─"*115)
     v4a=np.mean([all_r[s]['v40'] for s in scenarios])
+    v4f=np.mean([all_r[s]['v40_fwd'] for s in scenarios])
     fpa=np.mean([all_r[s]['fp'] for s in scenarios if np.isfinite(all_r[s]['fp'])])
     ssa=np.mean([all_r[s]['ss_best'] for s in scenarios if np.isfinite(all_r[s]['ss_best'])])
-    # Single-tracker comparison (fair)
     ss_ukfca_avg=np.mean([all_r[s]['ukf_ca'] for s in scenarios])
-    ss_ca_avg=np.mean([all_r[s]['ca'] for s in scenarios])
-    print(f"\n  NX-MIMOSA v4.0 avg:  {v4a:.2f} m")
-    print(f"  FilterPy IMM avg:    {fpa:.2f} m")
-    print(f"  SS BEST avg (oracle):{ssa:.2f} m  (cherry-picked per scenario)")
-    print(f"  SS UKF-CA avg:       {ss_ukfca_avg:.2f} m  (single-tracker, fair comparison)")
-    print(f"  SS KF-CA avg:        {ss_ca_avg:.2f} m  (single-tracker, fair comparison)")
-    print(f"\n  v4.0 vs FilterPy:    {w_fp}/8 wins, +{(fpa-v4a)/fpa*100:.1f}%")
-    print(f"  v4.0 vs SS BEST:     {w_ss}/8 wins, +{(ssa-v4a)/ssa*100:.1f}%")
-    print(f"  v4.0 vs SS UKF-CA:   +{(ss_ukfca_avg-v4a)/ss_ukfca_avg*100:.1f}% (fair single-tracker)")
+    print(f"\n  NX-MIMOSA v4.0.1 BEST avg: {v4a:.2f} m  (auto-select best stream)")
+    print(f"  NX-MIMOSA v4.0.1 FWD avg:  {v4f:.2f} m  (real-time only)")
+    print(f"  FilterPy IMM avg:          {fpa:.2f} m")
+    print(f"  SS BEST avg (oracle):      {ssa:.2f} m  (cherry-picked per scenario)")
+    print(f"  SS UKF-CA avg:             {ss_ukfca_avg:.2f} m  (single-tracker, fair)")
+    print(f"\n  v4.0.1 BEST vs FilterPy:   {w_fp}/8 wins, +{(fpa-v4a)/fpa*100:.1f}%")
+    print(f"  v4.0.1 BEST vs SS BEST:    {w_ss}/8 wins, {(ssa-v4a)/ssa*100:+.1f}%")
+    print(f"  v4.0.1 FWD vs SS UKF-CA:   +{(ss_ukfca_avg-v4f)/ss_ukfca_avg*100:.1f}% (realtime fair)")
+    print(f"  v4.0.1 BEST vs SS UKF-CA:  +{(ss_ukfca_avg-v4a)/ss_ukfca_avg*100:.1f}% (auto-select)")

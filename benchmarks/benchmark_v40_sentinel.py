@@ -117,7 +117,7 @@ def main():
     results={}
     for sc in scenarios:
         print(f"\n{'─'*60}\n  {sc}\n{'─'*60}")
-        rf,ra,rw,rfl,rfp=[],[],[],[],[]; iok=0; plats={}; nm=[]
+        rf,ra,rw,rfl,rfp,rcvf,rcvr,rhyb=[],[],[],[],[],[],[],[]; iok=0; plats={}; nm=[]
         for run in range(n_runs):
             seed=42+run; rng=np.random.RandomState(seed+10000)
             truth,tcat=gen(sc,dt,N,seed); meas=truth[:,:2]+rng.normal(0,r_std,(N,2))
@@ -127,31 +127,38 @@ def main():
                 for z in meas: xr,_,intent=t.update(z); fwd.append(xr.copy())
                 win=t.get_window_smoothed_estimates(30); full=t.get_smoothed_estimates()
                 adp=t.get_adaptive_best_estimates()
+                cvf=t.get_cv_forward_estimates(); cvr=t.get_cv_rts_estimates()
+                hyb=t.get_hybrid_best_estimates()
                 rf.append(rmse(truth,fwd)); rw.append(rmse(truth,win))
                 rfl.append(rmse(truth,full)); ra.append(rmse(truth,adp))
+                rcvf.append(rmse(truth,cvf)); rcvr.append(rmse(truth,cvr))
+                rhyb.append(rmse(truth,hyb))
                 nm.append(intent.n_active_models); p=intent.platform_type
                 plats[p]=plats.get(p,0)+1
                 if intent.platform_category==tcat: iok+=1
             except Exception as e:
-                if run==0: print(f"  ERR: {e}")
-                rf.append(np.inf); rw.append(np.inf); rfl.append(np.inf); ra.append(np.inf)
+                if run==0: print(f"  ERR: {e}"); import traceback; traceback.print_exc()
+                for lst in [rf,rw,rfl,ra,rcvf,rcvr,rhyb]: lst.append(np.inf)
             fp=run_fp(meas,dt,r_std)
             if fp: rfp.append(rmse(truth,fp))
         def f(a): return f"{np.mean(a):.2f}" if a and np.isfinite(np.mean(a)) else "N/A"
-        means={'fwd':np.mean(rf),'adp':np.mean(ra),'win':np.mean(rw),'full':np.mean(rfl)}
+        means={'fwd':np.mean(rf),'adp':np.mean(ra),'win':np.mean(rw),'full':np.mean(rfl),
+               'cvf':np.mean(rcvf),'cvr':np.mean(rcvr),'hyb':np.mean(rhyb)}
         best_k=min(means,key=means.get); best_v=means[best_k]
-        print(f"  v4.0 Forward:   {f(rf)} m")
-        print(f"  v4.0 Adaptive:  {f(ra)} m")
-        print(f"  v4.0 Window-30: {f(rw)} m")
-        print(f"  v4.0 Full:      {f(rfl)} m")
+        print(f"  v4.0 IMM-Fwd:   {f(rf)} m")
+        print(f"  v4.0 Adaptive:  {f(ra)} m  (NIS-gated IMM/CV realtime)")
+        print(f"  v4.0 CV-Fwd:    {f(rcvf)} m  (parallel CV forward)")
+        print(f"  v4.0 CV-RTS:    {f(rcvr)} m  (parallel CV+RTS offline)")
+        print(f"  v4.0 Hybrid:    {f(rhyb)} m  (CV-RTS benign + IMM-fwd dynamic)")
         print(f"  v4.0 BEST:      {best_v:.2f} m ({best_k})")
         if rfp: print(f"  FilterPy IMM:   {f(rfp)} m")
         print(f"  Intent accuracy: {iok}/{n_runs} ({100*iok/n_runs:.0f}%)")
         print(f"  Platform IDs: {dict(sorted(plats.items(),key=lambda x:-x[1]))}")
         if nm: print(f"  Avg models: {np.mean(nm):.1f}")
         fpm=np.mean(rfp) if rfp else np.inf
-        results[sc]={'best':best_v,'fwd':means['fwd'],'adp':means['adp'],'win':means['win'],
-                     'full':means['full'],'fp':fpm,'int':iok/n_runs,'stream':best_k}
+        results[sc]={'best':best_v,'fwd':means['fwd'],'adp':means['adp'],
+                     'cvf':means['cvf'],'cvr':means['cvr'],'hyb':means['hyb'],
+                     'fp':fpm,'int':iok/n_runs,'stream':best_k}
     print(f"\n{'='*80}\n  SUMMARY\n{'='*80}")
     print(f"{'Scenario':<22} {'v4.0 BEST':>10} {'Stream':>6} {'v4.0 Fwd':>10} {'FilterPy':>10} {'Intent%':>8} {'Win?':>5}")
     print("─"*80)
