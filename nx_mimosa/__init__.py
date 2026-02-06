@@ -13,7 +13,7 @@ Quick Start::
 Nexellum d.o.o. — Dr. Mladen Mešter — mladen@nexellum.com
 """
 
-__version__ = "5.6.0"
+__version__ = "5.7.0"
 __author__ = "Dr. Mladen Mešter"
 __email__ = "mladen@nexellum.com"
 __license__ = "AGPL-3.0-or-later"

@@ -15,7 +15,7 @@
 
 [![Accuracy: 8.6× better](https://img.shields.io/badge/Accuracy-8.6×%20better%20than%20Stone%20Soup-brightgreen)]()
 [![18/19 Wins](https://img.shields.io/badge/Benchmark-18%2F19%20Wins-brightgreen)]()
-[![254 Tests](https://img.shields.io/badge/Tests-254%2F254%20PASS-brightgreen)]()
+[![278 Tests](https://img.shields.io/badge/Tests-278%2F278%20PASS-brightgreen)]()
 [![NumPy Only](https://img.shields.io/badge/Dependency-NumPy%20Only-blue)]()
 [![AGPL v3 / Commercial](https://img.shields.io/badge/License-AGPL%20v3%20%2F%20Commercial-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
@@ -81,6 +81,16 @@ for step in range(50):
 - NATO SIAP quality metrics
 
 **A team of 3–5 engineers would need 12–18 months and $1.5M+ to build this from scratch.**
+
+### See It Live — Zero Code
+
+```bash
+python -m nx_mimosa.demo              # All 3 scenarios with matplotlib
+python -m nx_mimosa.demo --scenario 1 # Fighter intercept only
+python -m nx_mimosa.demo --save       # Save PNGs instead of display
+```
+
+Three scenarios demonstrate key capabilities: fighter intercept (7g break turn with IMM switching), multi-target clutter (3 targets + 10 false alarms/scan), and ECM engagement (noise jamming with automatic adaptive gating).
 
 ---
 
@@ -270,13 +280,41 @@ Switch between them with one parameter: `association="gnn"` / `"jpda"` / `"mht"`
 | Orbital Maneuver | **105m** | 5,670m | **54× better** |
 | Reentry Vehicle | **483m** | 6,078m | 12.6× better |
 
-### 141 Tests, Zero Failures
+### 278 Tests, Zero Failures
 
 Every module. Every algorithm. Every edge case. Verified on every commit.
 
 ```
-141 passed in 1.96s — GNN, JPDA, MHT, 3D models, coordinates, metrics, scenarios
+278 passed in 16.76s — GNN, JPDA, MHT, IMM, coords, intelligence, fusion, ECM, demo
 ```
+
+### Platform ID Confusion Matrix — Honest Numbers
+
+We tested our Platform Classifier against all 30 platform types (20 trials × 30 platforms = 600 classifications):
+
+```
+FINE accuracy (exact type):  66.5%
+TOP-3 accuracy:              99.8%
+COARSE accuracy (class):     72.0%
+```
+
+**What this means:** If NX-MIMOSA says "4th gen fighter," it's the exact type 66.5% of the time. But the correct answer is in the top-3 candidates 99.8% of the time. Class-level discrimination (fighter vs civil vs missile) works 72% of the time from kinematics alone.
+
+**Known aliasing risk:** Commercial airliners and business jets at cruise (Mach 0.8, FL350, 1g) overlap kinematically with strategic bombers. This is a physics limitation, not a software bug — IFF/ESM/RCS data is needed to resolve it. The classifier correctly reports probabilistic alternatives for every classification.
+
+### ECM Resilience — 4/4 Scenarios Survived
+
+With v5.7's ECM-aware adaptive gating (`set_ecm_state()`):
+
+```
+Scenario  Survived  Mean Error  Max Error  ECM Detected
+RGPO         YES       135m       439m        NO
+Noise        YES       116m       595m       YES
+DRFM         YES        97m       348m        NO
+Chaff        YES        67m       188m       YES
+```
+
+The tracker widens its association gate and inflates measurement covariance under jamming (Bar-Shalom covariance inflation approach), maintaining tracks through 40 scans of electronic attack.
 
 ---
 

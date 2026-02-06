@@ -1396,6 +1396,15 @@ class MultiTargetTracker:
         self._step = 0
         self._timestamp = 0.0
         
+        # ECM-aware adaptive gating [REQ-V57-ECM-01]
+        self._ecm_active = False
+        self._ecm_gate_mult = 1.0      # Gate multiplier (1.0 = normal)
+        self._ecm_coast_ext = 0         # Extra coast scans allowed
+        self._ecm_r_scale = 1.0         # Measurement noise inflation
+        self._base_gate = config.gate_threshold
+        self._base_delete = config.delete_misses
+        self._base_coast_age = config.max_coast_age
+        
         # Statistics
         self.stats = {
             "total_tracks_created": 0,
@@ -1436,6 +1445,66 @@ class MultiTargetTracker:
             ),
         }
         return presets.get(domain, TrackManagerConfig())
+    
+    def set_ecm_state(self, ecm_active: bool, 
+                      gate_multiplier: float = 3.0,
+                      coast_extension: int = 5,
+                      r_scale: float = 3.0) -> None:
+        """[REQ-V57-ECM-02] Signal ECM environment to tracker.
+        
+        When ECM is detected (by IntelligencePipeline), call this to:
+        1. Widen the association gate (prevent track loss on noisy measurements)
+        2. Extend coast duration (tolerate more missed detections)
+        3. Inflate R for measurement update (reduce weight of corrupted data)
+        
+        This implements the "covariance inflation + adaptive gating" approach
+        from Bar-Shalom & Li (2001) §11.7 — the correct response to ECM
+        is NOT to reject measurements, but to trust them less.
+        
+        Args:
+            ecm_active: True if ECM detected, False to restore normal
+            gate_multiplier: Scale factor for chi-squared gate (3.0 = 3x wider)
+            coast_extension: Extra scans before track deletion
+            r_scale: Measurement noise inflation factor
+        """
+        self._ecm_active = ecm_active
+        
+        if ecm_active:
+            self._ecm_gate_mult = max(gate_multiplier, 1.0)
+            self._ecm_coast_ext = max(coast_extension, 0)
+            self._ecm_r_scale = max(r_scale, 1.0)
+            # Apply: widen gate + extend coast
+            self.config.gate_threshold = self._base_gate * self._ecm_gate_mult
+            self.config.delete_misses = self._base_delete + self._ecm_coast_ext
+            self.config.max_coast_age = self._base_coast_age + self._ecm_coast_ext
+        else:
+            self._ecm_gate_mult = 1.0
+            self._ecm_coast_ext = 0
+            self._ecm_r_scale = 1.0
+            # Restore baseline
+            self.config.gate_threshold = self._base_gate
+            self.config.delete_misses = self._base_delete
+            self.config.max_coast_age = self._base_coast_age
+    
+    def inflate_track_R(self, scale: float) -> None:
+        """[REQ-V57-ECM-03] Inflate measurement covariance on all active tracks.
+        
+        Under ECM, measurements are corrupted. Rather than rejecting them,
+        we increase R to reduce their influence on the state estimate.
+        The track coasts more on its prediction (which is clean) while
+        still incorporating the degraded measurement with appropriate weight.
+        
+        Args:
+            scale: R multiplication factor (e.g., 3.0 = trust measurement 3x less)
+        """
+        for track in self.tracks:
+            if track.status != TrackStatus.DELETED:
+                if hasattr(track.filter, 'filters'):
+                    # IMM: inflate R on all sub-filters
+                    for kf in track.filter.filters:
+                        kf.R = np.eye(kf.nz) * (self.r_std * scale) ** 2
+                else:
+                    track.filter.R = np.eye(track.filter.nz) * (self.r_std * scale) ** 2
     
     def process_scan(self, measurements: np.ndarray,
                      timestamp: Optional[float] = None) -> List[TrackState]:

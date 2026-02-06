@@ -1,3 +1,10 @@
 *.pyc
 __pycache__/
 *.bak
+build/
+dist/
+*.egg-info/
+docs/build/
+.pytest_cache/
+*.egg
+.eggs/
