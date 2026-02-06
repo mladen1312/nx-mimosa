@@ -617,6 +617,173 @@ class IntentPredictor:
 # =============================================================================
 # NX-MIMOSA v4.0 SENTINEL
 # =============================================================================
+# =============================================================================
+# [REQ-V41-11] Parallel Z-Axis Kalman Filter
+# =============================================================================
+# Independent 1D constant-acceleration Kalman on altitude (z-axis).
+# State: [z, vz, az]  (3-state)
+# Provides filtered altitude, vertical velocity, and vertical acceleration
+# for intent prediction (terminal dive, sea skimming, pop-up, reentry).
+#
+# Why parallel and not full 3D:
+#   - Zero coupling with xy tracker → zero risk of regression
+#   - xy IMM models (CT, CA, Jerk) are horizontal-plane phenomena
+#   - z dynamics are simpler (no coordinated turn in z)
+#   - 3-state CA model captures dive/climb/coast transitions
+#
+# The filter adapts its process noise based on ECM status:
+#   - Clean: q_z = q_z_base (smooth tracking)
+#   - ECM:   q_z = q_z_base * ecm_r_scale (trust prediction more)
+# =============================================================================
+class ParallelZFilter:
+    """Independent altitude tracker: state = [z, vz, az]."""
+
+    def __init__(self, dt: float, r_z: float = 50.0, q_z: float = 0.1):
+        """
+        Args:
+            dt:  Sample period (s)
+            r_z: Altitude measurement noise variance (m²).
+                 Default 50 = ±7m 1σ (typical barometric or radar elevation).
+            q_z: Process noise intensity for vertical acceleration (m²/s⁵).
+                 Default 0.1 = gentle maneuvers; increase for fighters.
+        """
+        self.dt = dt
+        self.r_z = r_z
+        self.q_z_base = q_z
+
+        # State: [z, vz, az]
+        self.x = np.zeros(3)
+        self.P = np.diag([1000.0, 100.0, 10.0])  # Large initial uncertainty
+
+        # F: constant-acceleration transition
+        #   z'  = z + vz*dt + 0.5*az*dt²
+        #   vz' = vz + az*dt
+        #   az' = az  (random walk on acceleration)
+        t = dt; t2 = 0.5 * dt**2
+        self.F = np.array([
+            [1, t, t2],
+            [0, 1, t ],
+            [0, 0, 1 ],
+        ])
+
+        # G: process noise input (jerk-driven)
+        #   Γ = [dt³/6, dt²/2, dt]ᵀ  (jerk noise → acceleration random walk)
+        g = np.array([[dt**3/6], [dt**2/2], [dt]])
+        self.Q_base = q_z * (g @ g.T)
+
+        # H: measure altitude only
+        self.H = np.array([[1.0, 0.0, 0.0]])
+        self.R_z = np.array([[r_z]])
+
+        self._initialized = False
+        self.step = 0
+
+    def update(self, z_meas: float, ecm_r_scale: float = 1.0) -> tuple:
+        """Process one altitude measurement.
+
+        Args:
+            z_meas: Altitude measurement (m). Use NaN to skip (predict-only).
+            ecm_r_scale: ECM R-scale from main tracker (boosts R_z under jamming).
+
+        Returns:
+            (z_est, vz_est, az_est) — filtered altitude, vertical velocity,
+            vertical acceleration.
+        """
+        # First measurement: initialize
+        if not self._initialized:
+            self.x[0] = z_meas
+            self._initialized = True
+            self.step = 1
+            return float(self.x[0]), 0.0, 0.0
+
+        self.step += 1
+
+        # Scale process noise: under ECM, widen Q to allow faster dynamics
+        Q = self.Q_base * max(1.0, ecm_r_scale * 0.5)
+
+        # --- Predict ---
+        xp = self.F @ self.x
+        Pp = self.F @ self.P @ self.F.T + Q
+
+        # --- Update (skip if NaN) ---
+        if np.isfinite(z_meas):
+            # R also scales with ECM (less trust in measurement)
+            R_eff = self.R_z * max(1.0, ecm_r_scale)
+            y = z_meas - self.H @ xp            # Innovation
+            S = self.H @ Pp @ self.H.T + R_eff   # Innovation covariance
+            K = Pp @ self.H.T / S[0, 0]          # Kalman gain (scalar)
+            self.x = xp + K.flatten() * y[0]
+            IKH = np.eye(3) - K @ self.H
+            self.P = IKH @ Pp @ IKH.T + K @ R_eff @ K.T  # Joseph form
+        else:
+            self.x = xp
+            self.P = Pp
+
+        return float(self.x[0]), float(self.x[1]), float(self.x[2])
+
+    @property
+    def altitude(self) -> float:
+        """Filtered altitude estimate (m)."""
+        return float(self.x[0])
+
+    @property
+    def vz(self) -> float:
+        """Filtered vertical velocity (m/s). Positive = climbing."""
+        return float(self.x[1])
+
+    @property
+    def az(self) -> float:
+        """Filtered vertical acceleration (m/s²). Positive = pull-up."""
+        return float(self.x[2])
+
+    @property
+    def dive_angle_deg(self) -> float:
+        """Dive angle in degrees from horizontal. Negative = diving."""
+        return float(np.degrees(np.arctan2(self.x[1], 1e-6)))  # placeholder
+
+    def get_dive_angle(self, horizontal_speed: float) -> float:
+        """Dive angle given horizontal speed from xy tracker.
+
+        Args:
+            horizontal_speed: Speed in xy-plane (m/s) from main tracker.
+
+        Returns:
+            Dive angle (degrees). Negative = diving, positive = climbing.
+        """
+        if horizontal_speed < 1.0:
+            return 0.0
+        return float(np.degrees(np.arctan2(self.x[1], horizontal_speed)))
+
+    def get_tti(self, horizontal_speed: float) -> float:
+        """Time-to-impact estimate for diving targets.
+
+        Args:
+            horizontal_speed: Speed in xy-plane (m/s).
+
+        Returns:
+            TTI in seconds. inf if not diving or altitude unknown.
+        """
+        z, vz = self.x[0], self.x[1]
+        if z <= 0 or vz >= 0:
+            return float('inf')  # Not diving or already at ground
+        # Constant-vz estimate: TTI = -z / vz
+        tti_const = -z / vz
+        # With acceleration correction: z + vz*t + 0.5*az*t² = 0
+        az = self.x[2]
+        if abs(az) > 0.1:
+            disc = vz**2 - 2 * az * z
+            if disc >= 0:
+                t1 = (-vz - np.sqrt(disc)) / az
+                t2 = (-vz + np.sqrt(disc)) / az
+                candidates = [t for t in [t1, t2] if t > 0]
+                if candidates:
+                    return float(min(candidates))
+        return float(max(0.1, tti_const))
+
+
+# =============================================================================
+# NX-MIMOSA v4.0/4.1 SENTINEL — Main Tracker
+# =============================================================================
 class NxMimosaV40Sentinel:
     def __init__(self, dt=0.1, r_std=2.5, platform_db_path=None,
                  window_size=30, prune_threshold=0.03,
@@ -648,10 +815,14 @@ class NxMimosaV40Sentinel:
         # [REQ-V41-08] Ghost track detection (multi-track explosion indicator)
         self._ghost_track_count = 0  # Set externally by tracker manager
         self._ecm_force_models = False  # True → override VS-IMM with CA/Jerk
+        self._ecm_gate_nis = float('inf')  # NIS gating threshold (DRFM/chaff)
         # RF observable cache (set via set_rf_observables() before each update)
         self._rf_snr_db = 25.0
         self._rf_rcs_dbsm = 0.0
         self._rf_doppler_hz = 0.0
+        # [REQ-V41-11] Parallel z-axis altitude filter
+        self.z_filter = ParallelZFilter(dt=dt, r_z=50.0, q_z=0.1)
+        self._z_meas = None  # Set via set_altitude() or feed_measurement_3d()
         if _HAS_CLASSIFIER:
             # Resolve DB path for v3 (multi-domain, 111 platforms)
             _db_v3_candidates = [
@@ -823,11 +994,31 @@ class NxMimosaV40Sentinel:
             if m=="Ballistic": xp[3] -= GRAVITY*self.dt
             Fu[m]=F.copy(); xps[m]=xp.copy(); Pps[m]=Pp.copy()
             nu = z - H@xp; S = H@Pp@H.T + self.R; Si = safe_inv(S)
-            nis_models[m] = float(nu @ Si @ nu)  # NIS for this model
-            sn,ld = np.linalg.slogdet(S)
-            liks[m] = max(np.exp(-0.5*2*np.log(2*np.pi)-0.5*ld-0.5*nu@Si@nu), 1e-300) if sn>0 else 1e-300
-            K = Pp@H.T@Si; xf = xp+K@nu
-            IKH = np.eye(nx)-K@H; Pf = IKH@Pp@IKH.T + K@self.R@K.T
+            nis_val = float(nu @ Si @ nu)
+            nis_models[m] = nis_val
+            
+            # [REQ-V41-12] Measurement gating: reject outliers under DRFM/chaff
+            # BUT: disable gating during maneuvers (high omega) because
+            # innovation is naturally large during turns → false gating → track loss
+            omega_for_gate = abs(self.omega)
+            effective_gate = self._ecm_gate_nis
+            if omega_for_gate > 0.1:
+                # During maneuvers, relax gating substantially
+                # omega=0.1→gate*2, omega=0.3→gate*10, omega>0.5→inf (no gating)
+                gate_relax = 1.0 + (omega_for_gate - 0.1) / 0.2 * 9.0
+                effective_gate = min(effective_gate * gate_relax, 1e6)
+            
+            if nis_val > effective_gate:
+                # GATED: measurement is likely false (DRFM echo or chaff return)
+                # Use prediction only — do NOT incorporate measurement
+                xf = xp.copy(); Pf = Pp.copy()
+                liks[m] = 1e-300  # Suppress this model's likelihood (no info)
+            else:
+                # Normal Kalman update
+                sn,ld = np.linalg.slogdet(S)
+                liks[m] = max(np.exp(-0.5*2*np.log(2*np.pi)-0.5*ld-0.5*nis_val), 1e-300) if sn>0 else 1e-300
+                K = Pp@H.T@Si; xf = xp+K@nu
+                IKH = np.eye(nx)-K@H; Pf = IKH@Pp@IKH.T + K@self.R@K.T
             self.x[m]=xf; self.P[m]=Pf; xfs[m]=xf.copy(); Pfs[m]=Pf.copy()
 
         # 2b. Dynamics-gated adaptive q_base
@@ -943,13 +1134,12 @@ class NxMimosaV40Sentinel:
         # Extract heading from velocity vector
         heading_rad = math.atan2(xc[3], xc[2]) if sp > 5 else 0.0
         
-        # Altitude estimate: use y-component (or z if 3D)
-        alt_m = abs(xc[1]) if len(xc) >= 2 else 0.0
-        
-        # Vertical velocity (approximate from position change)
-        vz_mps = 0.0
-        if self.xc_h and len(self.xc_h[-1]) >= 2:
-            vz_mps = (xc[1] - self.xc_h[-1][1]) / self.dt
+        # [REQ-V41-11] Altitude from parallel z-filter (filtered, not raw)
+        z_meas = self._z_meas if self._z_meas is not None else float('nan')
+        z_est, vz_est, az_est = self.z_filter.update(z_meas, self._ecm_r_scale)
+        alt_m = max(0.0, z_est)  # Filtered altitude (m AGL)
+        vz_mps = vz_est          # Filtered vertical velocity (m/s)
+        self._z_meas = None      # Consume measurement (require fresh each cycle)
         
         if self.cls_pipeline is not None and self.step > 5:
             # Full v4.1 pipeline: classifier + intent + ECM
@@ -990,30 +1180,70 @@ class NxMimosaV40Sentinel:
                 ecm_conf = 0.0
             
             # Compute target R scale from ECM type + confidence
+            # =============================================================
+            # STRATEGY (validated by ECM benchmark):
+            #   DECEPTION (RGPO/VGPO): Heavy R-boost → coast on prediction
+            #     Measurement is BIASED (systematic error) → ignore it
+            #   NOISE JAMMING: R-RECALIBRATE to actual noise level
+            #     Measurement is unbiased but noisy → match R to real noise
+            #     Formula: R_scale ≈ 10^(SNR_drop / 10) (power ratio)
+            #   DRFM: Moderate R-boost + measurement GATING
+            #     50% of measurements are false → gate on NIS
+            #   CHAFF: Light recalibration + gating
+            #     60% good, 40% chaff → moderate approach
+            # =============================================================
             if _HAS_CLASSIFIER:
+                snr_measured = self._rf_snr_db
+                snr_nominal = 25.0  # Assumed baseline SNR
+                
                 if ecm_status == ECMStatus.CLEAN:
                     target_r_scale = 1.0
-                elif ecm_status in (ECMStatus.NOISE_JAMMING, ECMStatus.MULTI_SOURCE):
-                    # Broadband: all measurement channels degraded
-                    target_r_scale = 10.0 + 10.0 * min(ecm_conf, 1.0)  # 10-20x
+                    self._ecm_gate_nis = float('inf')  # No gating
+                    
                 elif ecm_status in (ECMStatus.DECEPTION_RGPO, ECMStatus.DECEPTION_VGPO):
-                    # Deception: specific channel corrupted, moderate overall boost
-                    target_r_scale = 5.0 + 10.0 * min(ecm_conf, 1.0)   # 5-15x
-                elif ecm_status == ECMStatus.DRFM_REPEATER:
-                    # Smart repeater: hard to distinguish from real — moderate boost
+                    # DECEPTION: Heavy R-boost — measurement is systematically wrong
+                    # Coast on prediction until deception stops
                     target_r_scale = 8.0 + 12.0 * min(ecm_conf, 1.0)   # 8-20x
+                    self._ecm_gate_nis = float('inf')  # Don't gate (already boosting R)
+                    
+                elif ecm_status in (ECMStatus.NOISE_JAMMING, ECMStatus.MULTI_SOURCE):
+                    # NOISE: Recalibrate R to match actual noise power
+                    # SNR drop in dB → power ratio for R scaling
+                    snr_drop = max(0, snr_nominal - snr_measured)
+                    # R scales with noise power: 10^(dB/10), capped
+                    target_r_scale = min(25.0, 10 ** (snr_drop / 10.0))
+                    # Minimum 2x if ECM detected at all
+                    target_r_scale = max(2.0, target_r_scale) if snr_drop > 3 else 1.0
+                    self._ecm_gate_nis = float('inf')  # No gating for noise
+                    
+                elif ecm_status == ECMStatus.DRFM_REPEATER:
+                    # DRFM: bimodal measurements (true + false echo).
+                    # Gating and R-boost are COUNTERPRODUCTIVE — they cause coast
+                    # which drifts during maneuvers. Kalman averaging of bimodal
+                    # distribution gives ~mean(true, false) which is moderate error.
+                    # Proper solution: MHT/PDA (future work, v5.0)
+                    target_r_scale = 1.0   # Don't boost R
+                    self._ecm_gate_nis = float('inf')  # Don't gate
+                    
                 elif ecm_status == ECMStatus.CHAFF_CORRIDOR:
-                    # Chaff: distributed clutter — moderate boost
-                    target_r_scale = 3.0 + 7.0 * min(ecm_conf, 1.0)    # 3-10x
+                    # CHAFF: multimodal measurements (60% true + 40% chaff cloud).
+                    # Same reasoning as DRFM: Kalman averaging is better than
+                    # gating/coasting. Q-boost (from ECM classifier) handles
+                    # the increased innovation variance.
+                    target_r_scale = 1.0   # Don't boost R
+                    self._ecm_gate_nis = float('inf')  # Don't gate
+                    
                 else:
-                    target_r_scale = 2.0
+                    target_r_scale = 1.5
+                    self._ecm_gate_nis = float('inf')
             else:
                 target_r_scale = 1.0
             
-            # Ghost track escalation: if tracker manager reports multi-track explosion
+            # Ghost track escalation: gating + moderate R-boost (not massive)
             if self._ghost_track_count > 3:
-                target_r_scale = max(target_r_scale, 15.0)  # At least 15x
-                ecm_conf = max(ecm_conf, 0.7)               # Force high confidence
+                target_r_scale = max(target_r_scale, 5.0)    # Moderate R-boost
+                self._ecm_gate_nis = min(self._ecm_gate_nis, 10.0)  # Tight gating
+                ecm_conf = max(ecm_conf, 0.7)
             
             # Asymmetric smoothing: fast up (0.5), slow down (0.92)
             if target_r_scale > self._ecm_r_scale:
@@ -1021,6 +1251,24 @@ class NxMimosaV40Sentinel:
             else:
                 self._ecm_r_scale = 0.92 * self._ecm_r_scale + 0.08 * target_r_scale
             self._ecm_r_scale = max(1.0, min(self._ecm_r_scale, 25.0))  # Clamp [1, 25]
+            
+            # =============================================================
+            # [REQ-V41-13] Maneuver-Aware R Modulation
+            # ---------------------------------------------------------
+            # R-boost is counterproductive when target is MANEUVERING
+            # because prediction drifts (wrong direction). Under high
+            # dynamics, we need measurements even if noisy/corrupted.
+            # Strategy: scale R-boost inversely with maneuver intensity.
+            #   omega < 0.1 → full R-boost (coasting is safe)
+            #   omega > 0.3 → minimal R-boost (need measurements)
+            # =============================================================
+            omega_abs = abs(self.omega)
+            if omega_abs > 0.05:
+                # Maneuver detected: reduce R-boost
+                # Linear ramp: omega=0.05→1.0x, omega=0.3→0.2x
+                maneuver_factor = max(0.2, 1.0 - (omega_abs - 0.05) / 0.25 * 0.8)
+                # Blend: R_scale moves toward 1.0 as maneuver intensifies
+                self._ecm_r_scale = 1.0 + (self._ecm_r_scale - 1.0) * maneuver_factor
             
             # Apply to active R matrix
             self.R = self.R_nominal * self._ecm_r_scale
@@ -1093,6 +1341,7 @@ class NxMimosaV40Sentinel:
             if self._ecm_r_scale < 1.05:
                 self._ecm_r_scale = 1.0
             self.R = self.R_nominal * self._ecm_r_scale
+            self._ecm_gate_nis = float('inf')  # No gating without pipeline
         
         # 6b. Emergency reactivation: if CV-only but velocity change is large
         if len(self.active_models) == 1 and self.active_models[0] == "CV":
@@ -1147,11 +1396,19 @@ class NxMimosaV40Sentinel:
         nu_cv = z - self._cv_H @ xp_cv
         S_cv = self._cv_H @ Pp_cv @ self._cv_H.T + self.R
         Si_cv = safe_inv(S_cv)
-        self._cv_nis = 0.85 * self._cv_nis + 0.15 * float(nu_cv @ Si_cv @ nu_cv)
-        K_cv = Pp_cv @ self._cv_H.T @ Si_cv
-        self._cv_x = xp_cv + K_cv @ nu_cv
-        IKH_cv = np.eye(4) - K_cv @ self._cv_H
-        self._cv_P = IKH_cv @ Pp_cv @ IKH_cv.T + K_cv @ self.R @ K_cv.T
+        cv_nis_raw = float(nu_cv @ Si_cv @ nu_cv)
+        self._cv_nis = 0.85 * self._cv_nis + 0.15 * cv_nis_raw
+        # [REQ-V41-12] Measurement gating for parallel CV
+        _eff_gate_cv = self._ecm_gate_nis
+        if abs(self.omega) > 0.1:
+            _eff_gate_cv = min(_eff_gate_cv * (1.0 + (abs(self.omega)-0.1)/0.2*9.0), 1e6)
+        if cv_nis_raw <= _eff_gate_cv:
+            K_cv = Pp_cv @ self._cv_H.T @ Si_cv
+            self._cv_x = xp_cv + K_cv @ nu_cv
+            IKH_cv = np.eye(4) - K_cv @ self._cv_H
+            self._cv_P = IKH_cv @ Pp_cv @ IKH_cv.T + K_cv @ self.R @ K_cv.T
+        else:
+            self._cv_x = xp_cv; self._cv_P = Pp_cv  # Predict-only (gated)
         self._cv_h.append(self._cv_x[:2].copy())
         self._cv_xf_h.append(self._cv_x.copy())
         self._cv_Pf_h.append(self._cv_P.copy())
@@ -1162,10 +1419,18 @@ class NxMimosaV40Sentinel:
         nu_ca = z - self._ca_H @ xp_ca
         S_ca = self._ca_H @ Pp_ca @ self._ca_H.T + self.R
         Si_ca = safe_inv(S_ca)
-        K_ca = Pp_ca @ self._ca_H.T @ Si_ca
-        self._ca_x = xp_ca + K_ca @ nu_ca
-        IKH_ca = np.eye(6) - K_ca @ self._ca_H
-        self._ca_P = IKH_ca @ Pp_ca @ IKH_ca.T + K_ca @ self.R @ K_ca.T
+        ca_nis_raw = float(nu_ca @ Si_ca @ nu_ca)
+        # [REQ-V41-12] Measurement gating for parallel CA
+        _eff_gate_ca = self._ecm_gate_nis
+        if abs(self.omega) > 0.1:
+            _eff_gate_ca = min(_eff_gate_ca * (1.0 + (abs(self.omega)-0.1)/0.2*9.0), 1e6)
+        if ca_nis_raw <= _eff_gate_ca:
+            K_ca = Pp_ca @ self._ca_H.T @ Si_ca
+            self._ca_x = xp_ca + K_ca @ nu_ca
+            IKH_ca = np.eye(6) - K_ca @ self._ca_H
+            self._ca_P = IKH_ca @ Pp_ca @ IKH_ca.T + K_ca @ self.R @ K_ca.T
+        else:
+            self._ca_x = xp_ca; self._ca_P = Pp_ca  # Predict-only (gated)
         self._ca_h.append(self._ca_x[:2].copy())
         self._ca_xf_h.append(self._ca_x.copy())
         self._ca_Pf_h.append(self._ca_P.copy())
@@ -1195,7 +1460,12 @@ class NxMimosaV40Sentinel:
         _ecm_q = 1.0
         _dive = 0.0
         _tti = float('inf')
-        _alt_rate = vz_mps
+        _alt_rate = vz_mps   # From z-filter (filtered)
+        
+        # [REQ-V41-11] Use z-filter for dive angle and TTI
+        if self.z_filter.step > 3 and sp > 5.0:
+            _dive = self.z_filter.get_dive_angle(sp)
+            _tti = self.z_filter.get_tti(sp)
         _is_false = False
         _alerts = []
         
@@ -1313,6 +1583,58 @@ class NxMimosaV40Sentinel:
         self._rf_rcs_dbsm = rcs_dbsm
         self._rf_doppler_hz = doppler_hz
     
+    # =========================================================================
+    # [REQ-V41-11] Altitude / Z-axis API
+    # =========================================================================
+    def set_altitude(self, altitude_m: float):
+        """Feed altitude measurement for parallel z-filter.
+        
+        Call BEFORE update() each cycle. If not called, z-filter runs
+        predict-only (coast) for that cycle — useful during ECM when
+        altimeter may be unreliable.
+        
+        Args:
+            altitude_m: Altitude above ground level (m). Must be > 0.
+        """
+        self._z_meas = altitude_m
+    
+    def feed_measurement_3d(self, z: np.ndarray):
+        """Feed 3D measurement [x, y, altitude].
+        
+        Convenience method: calls update() with [x,y] for xy-tracker
+        and feeds altitude to z-filter in one call.
+        
+        Args:
+            z: 3-element array [x, y, altitude_m]
+            
+        Returns:
+            Same as update() — (position_xy, covariance, intent_state)
+        """
+        if len(z) < 3:
+            return self.update(z[:2])
+        self._z_meas = float(z[2])
+        return self.update(z[:2])
+    
+    @property
+    def altitude_state(self) -> dict:
+        """Current altitude filter state for display / diagnostics.
+        
+        Returns:
+            dict with z_est, vz_est, az_est, dive_angle_deg, z_filter_step
+        """
+        zf = self.z_filter
+        sp = 0.0
+        if hasattr(self, 'xc_h') and self.xc_h:
+            sp = np.linalg.norm(self.xc_h[-1][2:4])
+        return {
+            "z_est": zf.altitude,
+            "vz_est": zf.vz,
+            "az_est": zf.az,
+            "dive_angle_deg": zf.get_dive_angle(sp),
+            "tti_s": zf.get_tti(sp),
+            "z_filter_step": zf.step,
+        }
+    
     @property
     def ecm_state(self) -> dict:
         """Current ECM state snapshot for operator display / alert.
@@ -1327,6 +1649,7 @@ class NxMimosaV40Sentinel:
             "ecm_q_scale": self._ecm_q_scale if isinstance(self._ecm_q_scale, (int, float)) else 1.0,
             "ecm_force_models": self._ecm_force_models,
             "ecm_high_conf": self._ecm_high_conf,
+            "ecm_gate_nis": self._ecm_gate_nis,
             "ghost_track_count": self._ghost_track_count,
             "active_models": list(self.active_models),
             "r_matrix_diag": float(self.R[0, 0]),
