@@ -1,5 +1,9 @@
 # NX-MIMOSA v4.1 "SENTINEL"
 
+<p align="center">
+  <img src="nx_mimosa_banner.jpg" alt="NX-MIMOSA Radar Systems Architect" width="100%">
+</p>
+
 **Platform-Aware Variable-Structure IMM Tracker with Intent Prediction, ECM Detection & Multi-Domain Classification**
 
 *Nexellum d.o.o. — Dr. Mladen Mešter*
