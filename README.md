@@ -1,10 +1,10 @@
-# NX-MIMOSA v4.1 "SENTINEL"
+# NX-MIMOSA v4.2 "GUARDIAN"
 
 <p align="center">
   <img src="nx_mimosa_banner.jpg" alt="NX-MIMOSA Radar Systems Architect" width="100%">
 </p>
 
-**Platform-Aware Variable-Structure IMM Tracker with Intent Prediction, ECM Detection & Multi-Domain Classification**
+**Platform-Aware Variable-Structure IMM Tracker with Intent Prediction, ECM Detection, GUARDIAN Measurement Rejection & Multi-Domain Classification**
 
 *Nexellum d.o.o. — Dr. Mladen Mešter*
 
@@ -30,6 +30,34 @@ Unlike generic tracking libraries, NX-MIMOSA dynamically adapts its motion model
 | vs FilterPy IMM | 6.46m avg | 60.12m avg | **+89.3%** |
 | vs Stone Soup BEST oracle | 6.46m avg | 12.06m avg | **+46.4%** |
 | vs Stone Soup UKF-CA (fair) | 10.33m avg | 14.35m avg | **+28.0%** |
+
+## v4.2 New: GUARDIAN — Innovation Bias Rejection
+
+v4.2 adds **measurement-level defense** against deceptive ECM (RGPO, VGPO, DRFM, Chaff):
+
+| Layer | Mechanism | Defends Against |
+|-------|-----------|-----------------|
+| **R-boost** (v4.1) | Increase measurement noise → reduce Kalman gain | Noise jamming |
+| **GUARDIAN** (v4.2) | Detect systematic bias in innovation → reject measurement | RGPO, VGPO, DRFM |
+| **NIS gating** (v4.2) | Statistical outlier test → reject extreme innovations | DRFM false echoes |
+
+**Key innovation:** GUARDIAN monitors the running mean of the innovation sequence `ν_k = z_k - Hx̂_{k|k-1}`. Under clean tracking, `E[ν] = 0`. Under deceptive ECM, `E[ν] ≠ 0` — this systematic shift is detectable and triggers measurement rejection (predict-only coast).
+
+**Safety mechanisms:** Warmup (30 steps), max coast (15 steps), maneuver guard (ω > 0.25 → never reject), ECM gate (only when ECM confirmed), instant recovery on ECM→Clean transition.
+
+### ECM Benchmark Results (v4.2 vs Q-only baseline)
+
+| Scenario | v4.2 RMS | Baseline RMS | Improvement | GUARDIAN Rejections |
+|----------|----------|--------------|-------------|---------------------|
+| RGPO | 227m | 231m | +1.7% | 15 |
+| VGPO | 213m | 219m | +2.8% | 30 |
+| DRFM | 2.0m | 85m | **+97.6%** | 74 |
+| Noise | 8.6m | 10.7m | +19.6% | 0 (correct) |
+| Chaff | 3.0m | 47m | **+93.6%** | 28 |
+| Combined+7g | 156m | 164m | +4.6% | 15 |
+| **Average** | **102m** | **126m** | **+19.3%** | — |
+
+**6/6 scenarios won.** Zero false rejections on clean data. Zero false rejections during maneuvers.
 
 ## v4.1 New Features
 

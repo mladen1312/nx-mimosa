@@ -1,5 +1,5 @@
 """
-NX-MIMOSA v4.1 "SENTINEL" — Platform-Aware Variable-Structure IMM Tracker
+NX-MIMOSA v4.2 "GUARDIAN" — Platform-Aware Variable-Structure IMM Tracker
 ===========================================================================
 [REQ-V40-01] 6-model IMM bank: CV, CT+, CT-, CA, Jerk, Ballistic
 [REQ-V40-02] Platform identification from kinematics (speed/g/altitude)
@@ -16,6 +16,9 @@ NX-MIMOSA v4.1 "SENTINEL" — Platform-Aware Variable-Structure IMM Tracker
 [REQ-V41-04] Threat level fusion (classifier + intent + ECM)
 [REQ-V41-05] False target rejection (birds, balloons, clutter)
 [REQ-V41-06] Alert stream for fire control (TTI, evasion, sea skim)
+[REQ-V42-01] GUARDIAN: Innovation bias detector (cumulative mean shift)
+[REQ-V42-02] Measurement rejection layer (predict-only coast on bias)
+[REQ-V42-03] Safety mechanisms: warmup, max coast, maneuver guard, ECM gate
 
 Author: Dr. Mladen Mešter / Nexellum d.o.o.
 License: AGPL v3 (open-source) | Commercial license available
@@ -618,6 +621,222 @@ class IntentPredictor:
 # NX-MIMOSA v4.0 SENTINEL
 # =============================================================================
 # =============================================================================
+# [REQ-V42-01] Innovation Bias Detector — GUARDIAN Layer
+# =============================================================================
+# Detects SYSTEMATIC measurement corruption (RGPO/VGPO) by monitoring
+# the innovation sequence {ν_k} = z_k - H·x̂_{k|k-1}.
+#
+# Under clean tracking:  E[ν] = 0  (innovation is zero-mean white noise)
+# Under deception ECM:   E[ν] ≠ 0  (bias accumulates from false returns)
+#
+# Detection criteria:
+#   1. Running mean bias:  ||mean(ν_history)|| > k·σ_ν
+#      → RGPO/VGPO creates progressive drift in innovation mean
+#   2. Innovation trend:   |Δmean(ν)| consistently positive/negative
+#      → Monotonic shift indicates systematic pull-off
+#   3. Normalized bias:    ||mean(ν)||² / trace(S) > χ²(0.99, 2)
+#      → Statistical test: bias exceeds expected innovation covariance
+#
+# Response: When bias detected → MEASUREMENT REJECTION (predict-only)
+# This is fundamentally different from R-boost:
+#   R-boost: Reduces gain but STILL uses corrupted measurement
+#   Rejection: COMPLETELY ignores measurement, uses prediction only
+#
+# Safety: Maneuver-aware — during turns, innovation naturally grows.
+# Use NIS (not raw innovation) to distinguish maneuver from bias.
+# =============================================================================
+class InnovationBiasDetector:
+    """Detects systematic bias in innovation sequence for RGPO/VGPO defense.
+    
+    [REQ-V42-01] Core v4.2 GUARDIAN component.
+    
+    Key safety mechanisms to prevent runaway rejection:
+    1. Warmup: Don't arm until filter_age > warmup_steps (filter must converge first)
+    2. Max coast: After max_consecutive_rejects, FORCE accept to prevent drift
+    3. Decay: Bias estimate naturally decays during rejection (no new innovations)
+    4. Only active when ECM confirmed (prevents false positives during maneuvers)
+    """
+    
+    def __init__(self, window: int = 20, bias_sigma: float = 3.5,
+                 trend_window: int = 10, max_consecutive_rejects: int = 15,
+                 warmup_steps: int = 30):
+        """
+        Args:
+            window: Innovation history length for running mean.
+            bias_sigma: Threshold multiplier — reject if mean > bias_sigma * σ.
+            trend_window: Window for trend detection (monotonic shift).
+            max_consecutive_rejects: Safety valve — force accept after this many.
+            warmup_steps: Don't arm until this many total updates received.
+        """
+        self.window = window
+        self.bias_sigma = bias_sigma
+        self.trend_window = trend_window
+        self.max_consecutive_rejects = max_consecutive_rejects
+        self.warmup_steps = warmup_steps
+        
+        # Innovation history: stores [νx, νy] per step — ONLY from accepted updates
+        self._nu_history: deque = deque(maxlen=window)
+        # Innovation covariance history (S matrix trace) — from accepted updates
+        self._s_trace_history: deque = deque(maxlen=window)
+        
+        # State
+        self.bias_detected = False
+        self.bias_magnitude = 0.0       # ||mean(ν)|| in meters
+        self.bias_direction = np.zeros(2)  # Unit vector of bias direction
+        self.bias_sigma_ratio = 0.0     # How many σ above threshold
+        self.reject_count = 0           # Consecutive rejections
+        self.total_rejections = 0       # Lifetime counter
+        self._total_updates = 0         # Total updates (for warmup)
+        self._armed = False             # Only arm after warmup + enough history
+    
+    def update(self, nu: np.ndarray, S: np.ndarray, nis: float,
+               omega: float = 0.0, ecm_active: bool = False) -> bool:
+        """Process one innovation and decide: accept or reject measurement.
+        
+        CRITICAL: Only ACCEPTED innovations are stored in history.
+        During rejection, history is FROZEN — this prevents the detector
+        from seeing its own drift as "bias" (runaway feedback loop).
+        
+        Args:
+            nu: Innovation vector [νx, νy] (meters).
+            S: Innovation covariance matrix (2×2).
+            nis: Normalized Innovation Squared (ν'·S⁻¹·ν).
+            omega: Current turn rate (rad/s) — for maneuver awareness.
+            ecm_active: Whether ECM detector has flagged active ECM.
+            
+        Returns:
+            True if measurement should be REJECTED (predict-only).
+            False if measurement is OK to use.
+        """
+        self._total_updates += 1
+        
+        # ── Safety Valve 1: Warmup ──────────────────────────────────
+        # Filter needs time to converge. Initial transients look like bias.
+        if self._total_updates < self.warmup_steps:
+            # Still warming up: accept everything, build history
+            self._nu_history.append(nu.copy())
+            self._s_trace_history.append(np.trace(S))
+            self.bias_detected = False
+            self.reject_count = 0
+            return False
+        
+        # ── Safety Valve 2: Max Coast Duration ──────────────────────
+        # If we've been rejecting too long, FORCE accept to prevent
+        # indefinite drift. Better to accept one corrupted measurement
+        # than to coast into oblivion.
+        if self.reject_count >= self.max_consecutive_rejects:
+            # Force accept — add to history, reset streak
+            self._nu_history.append(nu.copy())
+            self._s_trace_history.append(np.trace(S))
+            self.bias_detected = False
+            self.reject_count = 0
+            return False
+        
+        # ── ECM Gate ────────────────────────────────────────────────
+        # Only engage bias detection when ECM is confirmed active.
+        # Without ECM, large innovations are from maneuvers, not jamming.
+        if not ecm_active:
+            self._nu_history.append(nu.copy())
+            self._s_trace_history.append(np.trace(S))
+            self.bias_detected = False
+            self.reject_count = 0
+            return False
+        
+        # ── Need minimum history ────────────────────────────────────
+        if len(self._nu_history) < 10:
+            self._nu_history.append(nu.copy())
+            self._s_trace_history.append(np.trace(S))
+            self._armed = False
+            self.bias_detected = False
+            return False
+        
+        self._armed = True
+        nu_arr = np.array(self._nu_history)
+        
+        # ── Criterion 1: Running Mean Bias ──────────────────────────
+        mean_nu = np.mean(nu_arr, axis=0)
+        bias_mag = np.linalg.norm(mean_nu)
+        
+        # Expected innovation std from S trace history
+        avg_s_trace = np.mean(self._s_trace_history)
+        sigma_nu = np.sqrt(avg_s_trace / 2.0)  # Per-axis σ from trace(S)/dim
+        sigma_mean = sigma_nu / np.sqrt(len(nu_arr))
+        
+        self.bias_magnitude = bias_mag
+        self.bias_sigma_ratio = bias_mag / (sigma_mean + 1e-10)
+        if bias_mag > 1e-6:
+            self.bias_direction = mean_nu / bias_mag
+        
+        # ── Criterion 2: Current innovation consistent with bias ────
+        # The CURRENT measurement must also be biased in the SAME direction
+        # as the running mean. This prevents rejecting good measurements
+        # after ECM stops (running mean decays slowly).
+        current_proj = float(np.dot(nu, self.bias_direction))
+        current_consistent = current_proj > sigma_nu * 0.5  # Same direction
+        
+        # ── Criterion 3: Normalized Bias Test ───────────────────────
+        normalized_bias = (bias_mag ** 2) / (avg_s_trace / len(nu_arr) + 1e-10)
+        chi2_exceeded = normalized_bias > 9.21  # χ²(0.99, 2)
+        
+        # ── Maneuver Guard ──────────────────────────────────────────
+        maneuver_penalty = 0.0
+        if abs(omega) > 0.08:
+            maneuver_penalty = 2.0 ** ((abs(omega) - 0.08) / 0.1)
+        
+        effective_sigma = self.bias_sigma * (1.0 + maneuver_penalty)
+        
+        # ── Decision ────────────────────────────────────────────────
+        # Reject requires ALL of:
+        #   1. Running mean bias > threshold
+        #   2. χ² confirms statistical significance
+        #   3. Current measurement is in bias direction (not already clean)
+        #   4. Not maneuvering hard
+        #   5. ECM is active (already checked above)
+        primary_trigger = self.bias_sigma_ratio > effective_sigma
+        should_reject = (primary_trigger and chi2_exceeded and 
+                        current_consistent and abs(omega) < 0.25)
+        
+        self.bias_detected = should_reject
+        
+        if should_reject:
+            self.reject_count += 1
+            self.total_rejections += 1
+            # DON'T add to history — this is a rejected (corrupted) innovation
+            # History stays frozen with last good data
+        else:
+            self.reject_count = 0
+            # ACCEPTED: add to history (this updates the running mean)
+            self._nu_history.append(nu.copy())
+            self._s_trace_history.append(np.trace(S))
+        
+        return should_reject
+    
+    @property
+    def state(self) -> dict:
+        """Diagnostic state snapshot."""
+        return {
+            "bias_detected": self.bias_detected,
+            "bias_magnitude_m": round(self.bias_magnitude, 2),
+            "bias_sigma_ratio": round(self.bias_sigma_ratio, 2),
+            "bias_direction": self.bias_direction.tolist(),
+            "reject_count": self.reject_count,
+            "total_rejections": self.total_rejections,
+            "armed": self._armed,
+        }
+    
+    def reset(self):
+        """Clear history (e.g., after track re-initialization)."""
+        self._nu_history.clear()
+        self._s_trace_history.clear()
+        self.bias_detected = False
+        self.bias_magnitude = 0.0
+        self.reject_count = 0
+        self.total_rejections = 0
+        self._total_updates = 0
+        self._armed = False
+
+
+# =============================================================================
 # [REQ-V41-11] Parallel Z-Axis Kalman Filter
 # =============================================================================
 # Independent 1D constant-acceleration Kalman on altitude (z-axis).
@@ -816,6 +1035,11 @@ class NxMimosaV40Sentinel:
         self._ghost_track_count = 0  # Set externally by tracker manager
         self._ecm_force_models = False  # True → override VS-IMM with CA/Jerk
         self._ecm_gate_nis = float('inf')  # NIS gating threshold (DRFM/chaff)
+        # [REQ-V42-01] GUARDIAN: Innovation Bias Detector (RGPO/VGPO defense)
+        self._bias_detector = InnovationBiasDetector(
+            window=20, bias_sigma=3.5, max_consecutive_rejects=15, warmup_steps=30)
+        self._measurement_rejected = False  # True when GUARDIAN rejects measurement
+        self._guardian_active = False       # True when bias detection is armed + ECM active
         # RF observable cache (set via set_rf_observables() before each update)
         self._rf_snr_db = 25.0
         self._rf_rcs_dbsm = 0.0
@@ -986,8 +1210,11 @@ class NxMimosaV40Sentinel:
                 dx = xi - xm; Pm += mu_ij*(Pi + np.outer(dx,dx))
             mx[mj]=xm; mP[mj]=Pm
 
-        # 2. Predict + Update
+        # 2. Predict + Update (with GUARDIAN measurement rejection)
         liks = {}; Fu = {}; xps = {}; Pps = {}; xfs = {}; Pfs = {}; nis_models = {}
+        nu_models = {}; S_models = {}
+        
+        # Phase 1: PREDICT all models, compute innovations
         for m in self.active_models:
             nx = MODEL_DIMS[m]; F,Q,H,_ = self._get_FQH(m)
             xp = F @ mx[m]; Pp = F @ mP[m] @ F.T + Q
@@ -996,25 +1223,57 @@ class NxMimosaV40Sentinel:
             nu = z - H@xp; S = H@Pp@H.T + self.R; Si = safe_inv(S)
             nis_val = float(nu @ Si @ nu)
             nis_models[m] = nis_val
+            nu_models[m] = nu.copy()
+            S_models[m] = S.copy()
+        
+        # Phase 2: GUARDIAN — Innovation Bias Detection [REQ-V42-01]
+        # Use CV model innovation as reference (most stable, always active)
+        ref_model = "CV" if "CV" in nu_models else next(iter(nu_models))
+        ref_nu = nu_models[ref_model]
+        ref_S = S_models[ref_model]
+        ref_nis = nis_models[ref_model]
+        
+        ecm_is_active = (self._ecm_r_scale > 1.5 or 
+                         self._ghost_track_count > 2 or
+                         self._ecm_high_conf)
+        
+        guardian_reject = self._bias_detector.update(
+            nu=ref_nu, S=ref_S, nis=ref_nis,
+            omega=self.omega, ecm_active=ecm_is_active
+        )
+        self._measurement_rejected = guardian_reject
+        self._guardian_active = self._bias_detector._armed and ecm_is_active
+        
+        # Phase 3: UPDATE — apply decision per model
+        for m in self.active_models:
+            nx = MODEL_DIMS[m]; _,_,H,_ = self._get_FQH(m)
+            xp = xps[m]; Pp = Pps[m]
+            nu = nu_models[m]; S = S_models[m]; Si = safe_inv(S)
+            nis_val = nis_models[m]
             
-            # [REQ-V41-12] Measurement gating: reject outliers under DRFM/chaff
-            # BUT: disable gating during maneuvers (high omega) because
-            # innovation is naturally large during turns → false gating → track loss
-            omega_for_gate = abs(self.omega)
-            effective_gate = self._ecm_gate_nis
-            if omega_for_gate > 0.1:
-                # During maneuvers, relax gating substantially
-                # omega=0.1→gate*2, omega=0.3→gate*10, omega>0.5→inf (no gating)
-                gate_relax = 1.0 + (omega_for_gate - 0.1) / 0.2 * 9.0
-                effective_gate = min(effective_gate * gate_relax, 1e6)
+            # ── Decision: REJECT or ACCEPT measurement? ─────────────
+            reject_this = False
             
-            if nis_val > effective_gate:
-                # GATED: measurement is likely false (DRFM echo or chaff return)
-                # Use prediction only — do NOT incorporate measurement
+            # A) GUARDIAN rejection (bias detected → all models predict-only)
+            if guardian_reject:
+                reject_this = True
+            
+            # B) NIS gating (per-model, for DRFM/chaff false returns)
+            if not reject_this:
+                omega_for_gate = abs(self.omega)
+                effective_gate = self._ecm_gate_nis
+                if omega_for_gate > 0.1:
+                    gate_relax = 1.0 + (omega_for_gate - 0.1) / 0.2 * 9.0
+                    effective_gate = min(effective_gate * gate_relax, 1e6)
+                if nis_val > effective_gate:
+                    reject_this = True
+            
+            if reject_this:
+                # REJECTED: Use prediction only — do NOT incorporate measurement
                 xf = xp.copy(); Pf = Pp.copy()
-                liks[m] = 1e-300  # Suppress this model's likelihood (no info)
+                liks[m] = 1e-300  # Suppress likelihood (no measurement info)
             else:
-                # Normal Kalman update
+                # ACCEPTED: Normal Kalman update
                 sn,ld = np.linalg.slogdet(S)
                 liks[m] = max(np.exp(-0.5*2*np.log(2*np.pi)-0.5*ld-0.5*nis_val), 1e-300) if sn>0 else 1e-300
                 K = Pp@H.T@Si; xf = xp+K@nu
@@ -1201,10 +1460,11 @@ class NxMimosaV40Sentinel:
                     self._ecm_gate_nis = float('inf')  # No gating
                     
                 elif ecm_status in (ECMStatus.DECEPTION_RGPO, ECMStatus.DECEPTION_VGPO):
-                    # DECEPTION: Heavy R-boost — measurement is systematically wrong
-                    # Coast on prediction until deception stops
+                    # DECEPTION: R-boost + GUARDIAN innovation bias rejection
+                    # R-boost reduces gain, GUARDIAN rejects biased measurements
+                    # NIS gating as backup: if innovation > 15σ, reject outright
                     target_r_scale = 8.0 + 12.0 * min(ecm_conf, 1.0)   # 8-20x
-                    self._ecm_gate_nis = float('inf')  # Don't gate (already boosting R)
+                    self._ecm_gate_nis = 15.0  # Tight NIS gate for extreme outliers
                     
                 elif ecm_status in (ECMStatus.NOISE_JAMMING, ECMStatus.MULTI_SOURCE):
                     # NOISE: Recalibrate R to match actual noise power
@@ -1485,6 +1745,11 @@ class NxMimosaV40Sentinel:
                 _alerts.append("ECM_FORCED_MODEL_ACTIVATION")
             if self._ghost_track_count > 3:
                 _alerts.append(f"GHOST_TRACKS_{self._ghost_track_count}")
+            # [REQ-V42-01] GUARDIAN alerts
+            if self._measurement_rejected:
+                _alerts.append(f"GUARDIAN_REJECT_BIAS_{self._bias_detector.bias_magnitude:.0f}m")
+            if self._bias_detector.reject_count > 5:
+                _alerts.append(f"GUARDIAN_COAST_MODE_{self._bias_detector.reject_count}steps")
             
             # Upgrade threat from v4.1 if higher
             if hasattr(cls_result.threat_level, 'value'):
@@ -1654,6 +1919,13 @@ class NxMimosaV40Sentinel:
             "active_models": list(self.active_models),
             "r_matrix_diag": float(self.R[0, 0]),
             "r_nominal_diag": float(self.R_nominal[0, 0]),
+            # [REQ-V42-01] GUARDIAN measurement rejection state
+            "guardian_active": self._guardian_active,
+            "guardian_rejecting": self._measurement_rejected,
+            "guardian_bias_m": self._bias_detector.bias_magnitude,
+            "guardian_bias_sigma": self._bias_detector.bias_sigma_ratio,
+            "guardian_reject_streak": self._bias_detector.reject_count,
+            "guardian_total_rejections": self._bias_detector.total_rejections,
         }
 
     # =========================================================================
