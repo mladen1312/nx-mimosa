@@ -36,6 +36,24 @@ Unlike generic tracking libraries, NX-MIMOSA dynamically adapts its motion model
 
 **Honest disclosure:** NX-MIMOSA wins all 7 scenarios. Closest competitor is Stone Soup KF-CA on Scenario 4 (Acceleration: 7.7m vs 4.9m). Stone Soup gets best-of-3 models per scenario (generous); NX-MIMOSA uses ONE fixed config for all. See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology and per-tracker detail.
 
+## Multi-Domain Benchmark — 19 Scenarios, 5 Domains
+
+**Reproducible** — `pip install stonesoup filterpy pykalman numpy && python benchmarks/multi_domain_benchmark.py`
+
+Independent cross-domain evaluation with domain-appropriate sensor parameters (dt, R_std, Q):
+
+| Domain | Scenarios | dt | R_std | NX Wins | Description |
+|--------|---:|---:|---:|---:|---|
+| **ATC** | 4 | 4.0s | 50m | 2/4 | Enroute, holding, ILS, go-around |
+| **Aviation** | 3 | 1.0s | 15m | 3/3 | Wind shear, turbulence, TCAS RA |
+| **Military** | 4 | 0.1s | 5m | 4/4 | Intercept, SAM, cruise missile, helo NOE |
+| **Automotive** | 4 | 0.05s | 0.3m | 1/4 | Highway, intersection, e-brake, lane change |
+| **Space** | 4 | 10s | 100m | 3/4 | LEO, GEO, orbital burn, reentry |
+
+**Grand totals:** NX-MIMOSA **13/19** wins | Stone Soup 3/19 | FilterPy 2/19 | PyKalman 1/19
+
+**Where NX-MIMOSA loses** — low-dynamics / high-SNR scenarios where a simpler filter is optimal: ATC holding pattern (FilterPy IMM 56.5m vs NX 76.6m), highway cruise (all CV filters ~0.16m vs NX 0.21m), GEO stationkeeping (Singer 68.9m vs NX 78.2m). These are "easy" targets where IMM overhead hurts. NX-MIMOSA dominates high-dynamics and multi-regime scenarios. See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
+
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 
 v4.2 adds **measurement-level defense** against deceptive ECM (RGPO, VGPO, DRFM, Chaff):
