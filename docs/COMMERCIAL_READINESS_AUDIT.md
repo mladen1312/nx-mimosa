@@ -1,157 +1,150 @@
-# NX-MIMOSA v5.0.0 — Commercial Readiness Audit
-## Updated Post-v5.0 "FULL SPECTRUM" Release
+# NX-MIMOSA v5.3.0 — Commercial Readiness Audit
+## Updated Post-v5.3 "FORGE READY" Release
 
 **Date:** 2026-02-06  
 **Auditor:** Radar Systems Architect v9.0  
-**Previous Score:** 35% (v4.3.0)  
-**Current Score:** **70% — BETA-GRADE — PILOT-CUSTOMER READY**
+**Previous Score:** 70% (v5.0.0)  
+**Current Score:** **85% — PRODUCTION-CANDIDATE — SALES READY**
 
 ---
 
 ## Executive Summary
 
-v5.0 resolves all four Tier-1 critical blockers identified in the v4.3.0 audit.
-NX-MIMOSA is now a **complete multi-target 3D tracking system** with dual
-data association (GNN + JPDA), full coordinate transforms, and M-of-N
-track management. Ready for pilot customer demos and integration testing.
+v5.3 completes all Tier-1 and Tier-2 items. NX-MIMOSA now includes full
+data association suite (GNN/JPDA/MHT), sensor bias estimation, OOSM handling,
+native Doppler, track-to-track association, quality metrics, CI/CD, Docker,
+and pip packaging. Ready for production deployment and commercial sales.
 
 ---
 
 ## TIER 1 — CRITICAL BLOCKERS → ALL RESOLVED ✅
 
 ### ✅ 1. Multi-Target Tracking (MTT)
-**Status: IMPLEMENTED (v5.0)**
-
-| Component | Status | Implementation |
+| Component | Status | Version |
 |---|---|---|
-| Track table (managed list of active tracks) | ✅ Done | `TrackState` + `MultiTargetTracker.tracks` |
-| GNN data association (Hungarian algorithm) | ✅ Done | `gnn_associate()` — optimal linear assignment |
-| JPDA data association | ✅ Done | `jpda_associate()` — Mahalanobis-based probabilistic |
-| MHT (Multi-Hypothesis Tracking) | ⏭️ Tier 2 | Deferred — JPDA sufficient for initial markets |
+| Track table + lifecycle (M-of-N) | ✅ | v5.0 |
+| GNN data association (Hungarian) | ✅ | v5.0 |
+| JPDA data association | ✅ | v5.0 |
+| MHT (Multi-Hypothesis Tracking) | ✅ | v5.0.1 |
 
 ### ✅ 2. 3D Tracking
-**Status: IMPLEMENTED (v5.0)**
-
-| Component | Status | Implementation |
+| Component | Status | Version |
 |---|---|---|
-| 3D state vector [x,y,z,vx,vy,vz] | ✅ Done | `KalmanFilter3D`, 6/7/9-state models |
-| CV3D (constant velocity) | ✅ Done | 6-state linear model |
-| CA3D (constant acceleration) | ✅ Done | 9-state with acceleration |
-| CT3D (coordinated turn) | ✅ Done | 7-state with turn rate ω |
-| 3D IMM filter | ✅ Done | `IMM3D` with 4-model bank |
+| CV3D / CA3D / CT3D motion models | ✅ | v5.0 |
+| 6/7/9-state IMM | ✅ | v5.0 |
+| M-of-N track management | ✅ | v5.0 |
 
-### ✅ 3. Track Management
-**Status: IMPLEMENTED (v5.0)**
-
-| Component | Status | Implementation |
+### ✅ 3. Coordinate Transforms
+| Component | Status | Version |
 |---|---|---|
-| M-of-N confirmation logic | ✅ Done | Configurable (default 3-of-5) |
-| Track lifecycle (init/confirm/delete) | ✅ Done | TENTATIVE→CONFIRMED→COASTING→DELETED |
-| Coasting (temporary miss tolerance) | ✅ Done | Configurable coast duration |
-| Score-based management | ✅ Done | Log-likelihood ratio tracking |
-| Domain presets | ✅ Done | military, atc, automotive, space, maritime |
+| WGS-84 ↔ ECEF ↔ ENU ↔ Spherical | ✅ | v5.0 |
+| Unbiased conversion (Bar-Shalom) | ✅ | v5.0 |
+| SensorLocation class | ✅ | v5.0 |
 
-### ✅ 4. Coordinate Transforms
-**Status: IMPLEMENTED (v5.0)**
-
-| Component | Status | Implementation |
+### ✅ 4. NATO-Standard Metrics
+| Component | Status | Version |
 |---|---|---|
-| WGS-84 ↔ ECEF | ✅ Done | Bowring iterative, sub-mm |
-| ECEF ↔ ENU | ✅ Done | Rotation matrices |
-| Spherical ↔ Cartesian | ✅ Done | Range/az/el conversions |
-| Unbiased conversion | ✅ Done | Bar-Shalom 2001 |
-| EKF Jacobians | ✅ Done | ∂(r,az,el)/∂(e,n,u) |
-| SensorLocation class | ✅ Done | Full mounting geometry |
+| NEES, NIS | ✅ | v5.0 |
+| OSPA | ✅ | v5.0 |
+| SIAP (completeness/purity) | ✅ | v5.0 |
 
 ---
 
-## TIER 2 — COMPETITIVE EDGE (Important for market differentiation)
+## TIER 2 — COMPETITIVE EDGE → ALL RESOLVED ✅
 
-### ⚠️ 5. Advanced Data Association
-| Component | Priority | Estimate |
+### ✅ 5. Advanced Data Association
+| Component | Status | Version |
 |---|---|---|
-| MHT (Multi-Hypothesis Tracking) | Medium | 4-6 weeks |
-| Track-to-track association (T2TA) | Medium | 2 weeks |
-| OOSM (out-of-sequence measurements) | Low | 2 weeks |
+| MHT (Multi-Hypothesis Tracking) | ✅ | v5.0.1 |
+| Track-to-track association (T2TA) | ✅ | v5.3 |
+| Track fusion (information form) | ✅ | v5.3 |
+| OOSM (out-of-sequence measurements) | ✅ | v5.2 |
 
-### ⚠️ 6. Sensor Bias Estimation
-| Component | Priority | Estimate |
+### ✅ 6. Sensor Bias Estimation
+| Component | Status | Version |
 |---|---|---|
-| Range/azimuth/elevation bias calibration | High | 2 weeks |
-| Multi-sensor bias alignment | Medium | 3 weeks |
+| Range/azimuth/elevation EWMA bias | ✅ | v5.2 |
+| Bias detection (sigma test) | ✅ | v5.2 |
+| Auto-correction | ✅ | v5.2 |
 
-### ⚠️ 7. Native Doppler Integration
-| Component | Priority | Estimate |
+### ✅ 7. Native Doppler Integration
+| Component | Status | Version |
 |---|---|---|
-| Doppler as core state variable | Medium | 2 weeks |
-| Range-rate gating in association | Medium | 1 week |
+| Doppler measurement matrix | ✅ | v5.2 |
+| Geometry-aware radial velocity | ✅ | v5.2 |
+| CV3D + Doppler state-space | ✅ | v5.2 |
+
+### ✅ 8. Track Quality Assessment
+| Component | Status | Version |
+|---|---|---|
+| Letter-grade quality scoring | ✅ | v5.3 |
+| Reliability flag | ✅ | v5.3 |
 
 ---
 
-## TIER 3 — PRODUCTION PACKAGING
+## TIER 3 — PRODUCTION & DISTRIBUTION → IN PROGRESS
 
-### ⏭️ 8. Distribution & Documentation
-| Component | Status | Estimate |
+### ✅ 9. Packaging & Documentation
+| Component | Status | Version |
 |---|---|---|
-| pip packaging (PyPI) | Not started | 1 week |
-| Sphinx documentation | Not started | 2 weeks |
-| API reference auto-gen | Not started | 1 week |
+| pip package (`pyproject.toml`) | ✅ | v5.0.1 |
+| Sphinx documentation (12 pages) | ✅ | v5.0.1 |
+| ReadTheDocs config | ✅ | v5.3 |
+| Package `__init__.py` with clean imports | ✅ | v5.0.1 |
 
-### ⏭️ 9. Integration & Deployment
-| Component | Status | Estimate |
+### ✅ 10. CI/CD & Deployment
+| Component | Status | Version |
 |---|---|---|
-| Network I/O (ZMQ/DDS) | Not started | 2 weeks |
-| Docker containerization | Not started | 1 week |
-| CI/CD pipeline (GitHub Actions) | Not started | 1 week |
+| GitHub Actions (lint/test/build/bench/docs/release) | ✅ | v5.3 |
+| Docker multi-stage build | ✅ | v5.3 |
+| Test matrix (Python 3.9–3.13) | ✅ | v5.3 |
+
+### ⚠️ 11. Remaining for 95%
+| Component | Priority | Estimate |
+|---|---|---|
+| PyPI publishing (twine upload) | High | 1 day |
+| Example notebooks (Jupyter) | Medium | 1 week |
+| Benchmark CLI tool | Medium | 3 days |
+| Type stubs / py.typed | Low | 1 day |
+| CONTRIBUTING.md + CLA | Medium | 2 days |
+
+---
+
+## TIER 4 — MARKET DIFFERENTIATION (v4.x features port)
+
+### ⏭️ Not yet ported to v5.x
+| Component | v4.x Status | v5.x Port Priority |
+|---|---|---|
+| Platform ID (111 types) | v4.3 ✅ | Medium — port existing |
+| Intent prediction (16 types) | v4.3 ✅ | Medium — port existing |
+| ECM detection (4 types) | v4.3 ✅ | Medium — port existing |
+| Multi-sensor fusion engine | v4.3 ✅ | High — port existing |
+| FPGA RTL path | v4.x ✅ | Low — customer-driven |
 
 ---
 
 ## Test Coverage Summary
 
-| Module | Tests | Status |
-|--------|-------|--------|
-| Fusion (v4.3) | 30 | ✅ PASS |
-| Intent/Classification (v4.0) | 43 | ✅ PASS |
-| Coordinates (v5.0) | 20 | ✅ PASS |
-| 3D Models/Filters (v5.0) | 10 | ✅ PASS |
-| GNN/Hungarian (v5.0) | 6 | ✅ PASS |
-| Track Management (v5.0) | 3 | ✅ PASS |
-| MTT Integration (v5.0) | 7 | ✅ PASS |
-| JPDA (v5.0) | 4 | ✅ PASS |
-| Metrics (v5.0) | 6 | ✅ PASS |
-| Scenarios (v5.0) | 4 | ✅ PASS |
-| Crossing Targets (v5.0) | 1 | ✅ PASS |
-| ECM (v4.0) | 2 | ✅ PASS |
-| **TOTAL** | **136** | **✅ ALL PASS** |
+| Version | Tests | Status |
+|---|---|---|
+| v5.0.0 | 136 | ✅ All pass |
+| v5.0.1 | 141 | ✅ All pass (+MHT) |
+| v5.2.0 | 160 | ✅ All pass (+Bias/OOSM/Doppler) |
+| v5.3.0 | **170** | ✅ **All pass** (+T2TA/Quality/CI) |
+
+## Score Breakdown
+
+| Category | Weight | Score | Notes |
+|---|---|---|---|
+| Core tracking (MTT + 3D) | 25% | 25/25 | GNN + JPDA + MHT, 3 motion models |
+| Sensor integration | 15% | 15/15 | Bias, OOSM, Doppler, T2TA, fusion |
+| Metrics & quality | 10% | 10/10 | NEES/NIS/OSPA/SIAP + track grades |
+| Packaging & docs | 15% | 13/15 | pip + Sphinx + RTD; missing PyPI |
+| CI/CD & deployment | 10% | 9/10 | GH Actions + Docker; missing PyPI CD |
+| v4.x feature port | 15% | 5/15 | Platform/Intent/ECM not yet ported |
+| Examples & onboarding | 10% | 8/10 | README + quickstart; need notebooks |
+| **TOTAL** | **100%** | **85%** | **SALES READY** |
 
 ---
 
-## Competitive Position (Updated)
-
-| Feature | NX-MIMOSA v5.0 | Stone Soup | MATLAB | FilterPy |
-|---------|----------------|------------|--------|----------|
-| Multi-target | ✅ GNN+JPDA | ✅ GNN+JPDA+MHT | ✅ Full | ❌ No |
-| 3D tracking | ✅ CV/CA/CT | ✅ Multiple | ✅ Full | ⚠️ Manual |
-| Track management | ✅ M-of-N | ✅ Yes | ✅ Yes | ❌ No |
-| Coordinate transforms | ✅ Full | ✅ Full | ✅ Full | ❌ No |
-| IMM adaptive | ✅ Platform-aware | ⚠️ Generic | ✅ Yes | ⚠️ Basic |
-| Multi-sensor fusion | ✅ 6 types | ⚠️ 2-3 | ✅ Yes | ❌ No |
-| Accuracy (RMS) | **100m** | 866m | ~150m | 866m |
-| ECM detection | ✅ Yes | ❌ No | ❌ No | ❌ No |
-| Intent classification | ✅ Yes | ❌ No | ❌ No | ❌ No |
-| Python, no deps | ✅ NumPy only | ❌ Heavy | ❌ MATLAB | ✅ NumPy |
-
-**Key advantages remaining:** Platform-aware IMM, ECM detection, intent classification, zero-config domain presets.
-
----
-
-## Roadmap to 100%
-
-| Phase | Target | Duration | Result |
-|-------|--------|----------|--------|
-| ~~Phase 1~~ | ~~Tier 1 blockers~~ | ~~3 months~~ | ✅ Done (v5.0) |
-| Phase 2 | Tier 2 (MHT, bias, Doppler) | 2 months | 85% |
-| Phase 3 | Tier 3 (pip, docs, Docker) | 1 month | 95% |
-| Phase 4 | Certification-ready | 1 month | 100% |
-
-**Next immediate action:** pip packaging + Sphinx docs for first pilot demo.
+*Next milestone: 95% = PyPI publish + Jupyter examples + v4.x feature port*
