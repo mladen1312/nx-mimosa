@@ -1078,12 +1078,23 @@ class NxMimosaV40Sentinel:
         # [REQ-V40-10] CV filter: matches Stone Soup CV forward/RTS
         # [REQ-V40-11] CA filter: matches Stone Soup CA forward/RTS
         # =====================================================================
-        # --- Parallel CV filter (q=0.5, continuous white noise model) ---
+        # --- Parallel CV filter (domain-adaptive Q) ---
         self._cv_F = np.array([[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]])
         self._cv_H = np.array([[1,0,0,0],[0,1,0,0]], dtype=float)
-        # Use Stone Soup's continuous white noise acceleration model:
-        # Q per axis = q * [[dt³/3, dt²/2], [dt²/2, dt]]
-        q_cv = 0.5  # Same as Stone Soup ConstantVelocity(0.5)
+        # [REQ-V42-PRECISION] Scale parallel CV process noise with q_base
+        # This ensures domain-appropriate precision:
+        #   Military (q_base=1.0):   q_cv=0.5  — same as Stone Soup default
+        #   ATC (q_base=0.05):       q_cv=0.025 — low for predictable enroute
+        #   Automotive (q_base=2.0): q_cv=0.5  — capped, automotive R is tiny
+        #   Space (q_base=0.001):    q_cv=0.0005 — orbital mechanics
+        # The key ratio is Q/R — we want parallel CV to match standalone CV
+        # performance so AOS can fully delegate to it on benign targets.
+        q_cv = min(max(q_base * 0.5, 0.001), 0.5)
+        # For high-rate low-R sensors (automotive/robotics), scale Q relative to R
+        # but don't go too low — need to handle occasional dynamics
+        if r_std < 1.0:
+            q_cv = min(q_cv, r_std * 0.5)  # Moderate reduction, not extreme
+        self._cv_q_value = q_cv  # Store for diagnostics
         self._cv_Q = np.zeros((4,4))
         for i in [0,1]:  # x and y axes
             self._cv_Q[i,i] = q_cv * dt**3 / 3
@@ -1093,16 +1104,22 @@ class NxMimosaV40Sentinel:
         self._cv_x = np.zeros(4)
         self._cv_P = np.eye(4) * 100
         self._cv_nis = 2.0  # Running NIS for CV filter
+        self._ca_nis = 2.0  # Running NIS for CA filter
+        self._aos_nis_window = []  # Sliding window of raw CV NIS for AOS median
         self._cv_h = []; self._cv_xf_h = []; self._cv_Pf_h = []
         
-        # --- Parallel CA filter (q=2.0, continuous white noise jerk model) ---
+        # --- Parallel CA filter (domain-adaptive Q) ---
         # State: [x, y, vx, vy, ax, ay]
         self._ca_F = np.eye(6)
         self._ca_F[0,2]=dt; self._ca_F[0,4]=dt**2/2
         self._ca_F[1,3]=dt; self._ca_F[1,5]=dt**2/2
         self._ca_F[2,4]=dt; self._ca_F[3,5]=dt
         self._ca_H = np.zeros((2,6)); self._ca_H[0,0]=1; self._ca_H[1,1]=1
-        q_ca = 2.0  # Same as Stone Soup ConstantAcceleration(2.0)
+        # [REQ-V42-PRECISION] Scale parallel CA Q with q_base
+        q_ca = min(max(q_base * 2.0, 0.01), 5.0)
+        if r_std < 1.0:
+            q_ca = min(q_ca, r_std * 2.0)  # Moderate reduction
+        self._ca_q_value = q_ca  # Store for diagnostics
         self._ca_Q = np.zeros((6,6))
         for i in [0,1]:  # x and y axes
             p,v,a = i, i+2, i+4
@@ -1734,6 +1751,13 @@ class NxMimosaV40Sentinel:
         Si_cv = safe_inv(S_cv)
         cv_nis_raw = float(nu_cv @ Si_cv @ nu_cv)
         self._cv_nis = 0.85 * self._cv_nis + 0.15 * cv_nis_raw
+        # AOS sliding window: keep last N raw CV NIS values for median-based selection
+        # Window = 2 seconds of history, min 20 steps (prevents premature CV
+        # switching on slow-update radars where holding pattern turns are long)
+        AOS_WINDOW = max(20, min(60, int(2.0 / max(self.dt, 0.01))))
+        self._aos_nis_window.append(cv_nis_raw)
+        if len(self._aos_nis_window) > AOS_WINDOW:
+            self._aos_nis_window.pop(0)
         # [REQ-V41-12] Measurement gating for parallel CV
         _eff_gate_cv = self._ecm_gate_nis
         if abs(self.omega) > 0.1:
@@ -1756,6 +1780,7 @@ class NxMimosaV40Sentinel:
         S_ca = self._ca_H @ Pp_ca @ self._ca_H.T + self.R
         Si_ca = safe_inv(S_ca)
         ca_nis_raw = float(nu_ca @ Si_ca @ nu_ca)
+        self._ca_nis = 0.85 * self._ca_nis + 0.15 * ca_nis_raw
         # [REQ-V41-12] Measurement gating for parallel CA
         _eff_gate_ca = self._ecm_gate_nis
         if abs(self.omega) > 0.1:
@@ -1772,6 +1797,75 @@ class NxMimosaV40Sentinel:
         self._ca_Pf_h.append(self._ca_P.copy())
         
         self._z_h.append(z[:2].copy())
+
+        # =====================================================================
+        # [REQ-V42-AOS] Adaptive Output Selector (AOS) — Precision Mode
+        # Conservative blending: default=IMM, switch to CV only when NIS
+        # is unambiguously low (sustained benign dynamics).
+        #
+        # Under H₀ (constant velocity): NIS ~ chi²(2), E[NIS]=2.0, median≈1.4
+        # Decision logic using both median AND P75 of sliding window:
+        #   median < 3.0 AND p75 < 5.0 → clearly benign → blend toward CV
+        #   p75 > 6.0 OR median > 4.0 → dynamics present → pure IMM
+        #   Otherwise: default to IMM (safe in uncertain zone)
+        #
+        # [REQ-V42-PRECISION] Domain adaptation:
+        #   - For high-rate sensors (dt≤0.1s): faster settle, tighter thresholds
+        #   - AOS alpha ramps from 0→1 smoothly as NIS approaches chi²(2) median
+        #   - Full CV pass-through (alpha=1.0) when median NIS ≈ 1.4
+        # =====================================================================
+        AOS_BENIGN_MEDIAN = 3.0   # Median below this: strong evidence of benign
+        AOS_MANEUVER_P75 = 6.0    # P75 above this: maneuver detected
+        AOS_MANEUVER_MED = 4.0    # Median above this: definitely not benign
+        AOS_SETTLE = max(10, AOS_WINDOW)  # Faster settle for high-rate
+        
+        if self.step > AOS_SETTLE and np.all(np.isfinite(self._cv_x)) \
+                and len(self._aos_nis_window) >= 8:
+            aos_median = float(np.median(self._aos_nis_window))
+            aos_p75 = float(np.percentile(self._aos_nis_window, 75))
+            
+            if aos_median < AOS_BENIGN_MEDIAN and aos_p75 < AOS_MANEUVER_P75 \
+                    and aos_median < AOS_MANEUVER_MED:
+                # Strong evidence of benign dynamics: blend toward CV
+                # chi²(2) median ≈ 1.4; map [1.4, 3.0] → [1.0, 0.0]
+                CHI2_MEDIAN = 1.4
+                alpha_cv = max(0.0, min(1.0,
+                    (AOS_BENIGN_MEDIAN - aos_median) / (AOS_BENIGN_MEDIAN - CHI2_MEDIAN)))
+                # Boost: when P75 is also low (< 3.0), full confidence in CV
+                if aos_p75 < 3.0:
+                    alpha_cv = min(1.0, alpha_cv * 1.3)
+            else:
+                alpha_cv = 0.0  # Default: IMM (safe for any dynamics)
+            
+            # Smooth transition: prevent jitter on borderline cases
+            if not hasattr(self, '_aos_alpha_ema'):
+                self._aos_alpha_ema = 0.0
+            # [REQ-V42-PRECISION] Emergency reset: if CV NIS spikes, 
+            # immediately kill CV blending (maneuver onset protection)
+            # This prevents lag during transition from benign to maneuvering
+            if aos_median > AOS_MANEUVER_MED or aos_p75 > AOS_MANEUVER_P75 * 1.5:
+                self._aos_alpha_ema = 0.0  # Hard reset — safety first
+                alpha_cv = 0.0
+            else:
+                # Fast ramp up to CV, slow ramp down to IMM (safety asymmetry)
+                if alpha_cv > self._aos_alpha_ema:
+                    self._aos_alpha_ema = 0.7 * self._aos_alpha_ema + 0.3 * alpha_cv
+                else:
+                    # Scale ramp-down speed with NIS magnitude
+                    # High NIS → fast exit from CV mode
+                    nis_urgency = min(1.0, max(0.0, (aos_median - 2.0) / 3.0))
+                    decay = 0.9 - 0.6 * nis_urgency  # 0.9 (gentle) → 0.3 (urgent)
+                    self._aos_alpha_ema = decay * self._aos_alpha_ema + (1.0-decay) * alpha_cv
+                alpha_cv = self._aos_alpha_ema
+            
+            if alpha_cv > 0.01:
+                xc_imm = xc.copy()
+                Pc_imm = Pc.copy()
+                xc = alpha_cv * self._cv_x[:4] + (1.0 - alpha_cv) * xc_imm
+                Pc = alpha_cv * self._cv_P[:4,:4] + (1.0 - alpha_cv) * Pc_imm
+                if alpha_cv < 0.99:
+                    dx = self._cv_x[:4] - xc_imm
+                    Pc += alpha_cv * (1.0 - alpha_cv) * np.outer(dx, dx)
 
         # 9. Store history
         self.xf_h.append(xfs); self.Pf_h.append(Pfs)

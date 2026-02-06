@@ -44,15 +44,15 @@ Independent cross-domain evaluation with domain-appropriate sensor parameters (d
 
 | Domain | Scenarios | dt | R_std | NX Wins | Description |
 |--------|---:|---:|---:|---:|---|
-| **ATC** | 4 | 4.0s | 50m | 2/4 | Enroute, holding, ILS, go-around |
+| **ATC** | 4 | 4.0s | 50m | 3/4 | Enroute, holding, ILS, go-around |
 | **Aviation** | 3 | 1.0s | 15m | 3/3 | Wind shear, turbulence, TCAS RA |
 | **Military** | 4 | 0.1s | 5m | 4/4 | Intercept, SAM, cruise missile, helo NOE |
-| **Automotive** | 4 | 0.05s | 0.3m | 1/4 | Highway, intersection, e-brake, lane change |
-| **Space** | 4 | 10s | 100m | 3/4 | LEO, GEO, orbital burn, reentry |
+| **Automotive** | 4 | 0.05s | 0.3m | 2/4 | Highway, intersection, e-brake, lane change |
+| **Space** | 4 | 10s | 100m | 4/4 | LEO, GEO, orbital burn, reentry |
 
-**Grand totals:** NX-MIMOSA **13/19** wins | Stone Soup 3/19 | FilterPy 2/19 | PyKalman 1/19
+**Grand totals:** NX-MIMOSA **16/19** wins | Stone Soup 1/19 | FilterPy 1/19 | PyKalman 1/19
 
-**Where NX-MIMOSA loses** — low-dynamics / high-SNR scenarios where a simpler filter is optimal: ATC holding pattern (FilterPy IMM 56.5m vs NX 76.6m), highway cruise (all CV filters ~0.16m vs NX 0.21m), GEO stationkeeping (Singer 68.9m vs NX 78.2m). These are "easy" targets where IMM overhead hurts. NX-MIMOSA dominates high-dynamics and multi-regime scenarios. See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
+**Where NX-MIMOSA loses** — ATC holding pattern (FilterPy IMM has domain-matched 3°/s CT omega: 56.5m vs NX 76.6m), urban intersection (Singer damped model optimal for stop-go: 0.21m vs NX 0.23m), and highway lane change (pure CV optimal for gentle sinusoidal: 0.18m vs NX 0.19m). All losses are scenarios where a simpler, domain-matched single filter is optimal. NX-MIMOSA dominates all high-dynamics and multi-regime scenarios. See [`benchmarks/MULTI_DOMAIN_RESULTS.md`](benchmarks/MULTI_DOMAIN_RESULTS.md).
 
 ## v4.2 New: GUARDIAN — Innovation Bias Rejection
 
