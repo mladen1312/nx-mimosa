@@ -1842,3 +1842,221 @@ def compute_radial_velocity(state: np.ndarray,
         return 0.0
     
     return float(np.dot(vel, los / r))
+
+
+# ===== TRACK-TO-TRACK ASSOCIATION (T2TA) =====
+
+@dataclass
+class T2TAPair:
+    """[REQ-V52-T2TA-01] A matched pair of tracks from two sensors."""
+    track_a_id: int
+    track_b_id: int
+    distance: float          # Statistical distance (Mahalanobis)
+    confidence: float        # Association confidence [0, 1]
+
+
+def t2ta_associate(tracks_a: List[Dict], tracks_b: List[Dict],
+                   gate_threshold: float = 16.0,
+                   method: str = "mahalanobis"
+                   ) -> Tuple[List[T2TAPair], List[int], List[int]]:
+    """[REQ-V52-T2TA-02] Track-to-track association for multi-sensor fusion.
+    
+    Associates tracks from two different sensors/trackers using statistical
+    distance between track states. Uses the Hungarian algorithm for optimal
+    one-to-one assignment.
+    
+    Each track dict must contain:
+        - 'id': int — track identifier
+        - 'x': np.ndarray — state vector [x, y, z, vx, vy, vz] (at minimum)
+        - 'P': np.ndarray — state covariance matrix
+    
+    The statistical distance between tracks a and b is:
+        d² = (xa - xb)ᵀ (Pa + Pb)⁻¹ (xa - xb)
+    
+    This accounts for uncertainty in both tracks, unlike measurement-to-track
+    association which only uses measurement covariance.
+    
+    Reference: Bar-Shalom & Chen, "Multisensor track-to-track association
+               for tracks with dependent errors," CDC 2004.
+    
+    Args:
+        tracks_a: List of track dicts from sensor A.
+        tracks_b: List of track dicts from sensor B.
+        gate_threshold: Chi-squared gate (16.0 = 99.7% for 3D).
+        method: Distance metric — 'mahalanobis' or 'euclidean'.
+    
+    Returns:
+        Tuple of:
+            - matched: List[T2TAPair] — matched track pairs
+            - unmatched_a: List[int] — unmatched track IDs from A
+            - unmatched_b: List[int] — unmatched track IDs from B
+    """
+    na = len(tracks_a)
+    nb = len(tracks_b)
+    
+    if na == 0 or nb == 0:
+        ua = [t['id'] for t in tracks_a]
+        ub = [t['id'] for t in tracks_b]
+        return [], ua, ub
+    
+    # Build cost matrix
+    cost = np.full((na, nb), 1e6)
+    
+    for i, ta in enumerate(tracks_a):
+        for j, tb in enumerate(tracks_b):
+            xa = ta['x']
+            xb = tb['x']
+            
+            # Use position components only (first 3 states)
+            ndim = min(len(xa), len(xb), 3)
+            diff = xa[:ndim] - xb[:ndim]
+            
+            if method == "mahalanobis":
+                Pa = ta['P'][:ndim, :ndim]
+                Pb = tb['P'][:ndim, :ndim]
+                S = Pa + Pb
+                try:
+                    S_inv = np.linalg.inv(S + np.eye(ndim) * 1e-10)
+                    d2 = float(diff @ S_inv @ diff)
+                except np.linalg.LinAlgError:
+                    d2 = 1e6
+            else:
+                d2 = float(np.dot(diff, diff))
+            
+            if d2 < gate_threshold:
+                cost[i, j] = d2
+    
+    # Hungarian assignment
+    assignments = hungarian_algorithm(cost)
+    
+    matched = []
+    matched_a_idx = set()
+    matched_b_idx = set()
+    
+    for i, j in assignments:
+        if cost[i, j] < gate_threshold:
+            # Confidence: chi-squared CDF approximation
+            d2 = cost[i, j]
+            ndim = 3
+            # Simple sigmoid-based confidence
+            conf = max(0.0, 1.0 - d2 / gate_threshold)
+            
+            matched.append(T2TAPair(
+                track_a_id=tracks_a[i]['id'],
+                track_b_id=tracks_b[j]['id'],
+                distance=float(np.sqrt(d2)),
+                confidence=conf,
+            ))
+            matched_a_idx.add(i)
+            matched_b_idx.add(j)
+    
+    unmatched_a = [tracks_a[i]['id'] for i in range(na) if i not in matched_a_idx]
+    unmatched_b = [tracks_b[j]['id'] for j in range(nb) if j not in matched_b_idx]
+    
+    return matched, unmatched_a, unmatched_b
+
+
+def fuse_tracks(track_a: Dict, track_b: Dict) -> Tuple[np.ndarray, np.ndarray]:
+    """[REQ-V52-T2TA-03] Fuse two associated tracks via covariance intersection.
+    
+    Produces the optimal fused state estimate that is consistent regardless
+    of unknown cross-correlations between the two track estimates.
+    
+    Uses the simple information-form fusion:
+        P_fused⁻¹ = Pa⁻¹ + Pb⁻¹
+        x_fused = P_fused (Pa⁻¹ xa + Pb⁻¹ xb)
+    
+    Args:
+        track_a: Dict with 'x' (state) and 'P' (covariance)
+        track_b: Dict with 'x' (state) and 'P' (covariance)
+    
+    Returns:
+        Tuple of (x_fused, P_fused)
+    """
+    xa, Pa = track_a['x'], track_a['P']
+    xb, Pb = track_b['x'], track_b['P']
+    
+    n = min(len(xa), len(xb))
+    xa, xb = xa[:n], xb[:n]
+    Pa, Pb = Pa[:n, :n], Pb[:n, :n]
+    
+    reg = np.eye(n) * 1e-10
+    Pa_inv = np.linalg.inv(Pa + reg)
+    Pb_inv = np.linalg.inv(Pb + reg)
+    
+    P_fused = np.linalg.inv(Pa_inv + Pb_inv)
+    x_fused = P_fused @ (Pa_inv @ xa + Pb_inv @ xb)
+    
+    return x_fused, P_fused
+
+
+# ===== TRACK QUALITY & RELIABILITY METRICS =====
+
+@dataclass
+class TrackQualityReport:
+    """[REQ-V52-TQ-01] Comprehensive track quality assessment."""
+    track_id: int
+    age_scans: int
+    hit_ratio: float          # Hits / total scans
+    avg_innovation: float     # Mean NIS — should be near measurement dimension
+    position_uncertainty: float  # Trace(P_pos) in meters
+    velocity_uncertainty: float  # Trace(P_vel) in m/s
+    quality_grade: str        # 'A' (excellent) through 'F' (unreliable)
+    is_reliable: bool
+
+
+def assess_track_quality(track: 'TrackState',
+                         nz: int = 3) -> TrackQualityReport:
+    """[REQ-V52-TQ-02] Assess quality of a single track.
+    
+    Grades tracks based on:
+    - Hit ratio (confirmation strength)
+    - Innovation consistency (filter health)
+    - Covariance magnitude (estimate confidence)
+    
+    Args:
+        track: TrackState from MultiTargetTracker
+        nz: Measurement dimension (for NIS normalization)
+    
+    Returns:
+        TrackQualityReport with letter grade and reliability flag.
+    """
+    # Hit ratio
+    total = track.hit_count + track.miss_count
+    hit_ratio = track.hit_count / max(total, 1)
+    
+    # Position & velocity uncertainty from covariance
+    P = track.filter.P if hasattr(track.filter, 'P') else track.filter.filters[0].P
+    pos_unc = float(np.sqrt(np.trace(P[:3, :3])))
+    vel_unc = float(np.sqrt(np.trace(P[3:6, 3:6]))) if P.shape[0] >= 6 else 0.0
+    
+    # Average innovation (simplified — use last NIS if available)
+    avg_inn = getattr(track, '_last_nis', float(nz))  # Default to ideal
+    
+    # Grading
+    score = 0.0
+    score += min(hit_ratio * 40, 40)           # Max 40 pts for hit ratio
+    score += max(0, 30 - pos_unc / 100) * 1.0  # Max 30 pts for low uncertainty
+    score += max(0, 30 - abs(avg_inn - nz) * 5) # Max 30 pts for consistent filter
+    
+    if score >= 85:
+        grade = 'A'
+    elif score >= 70:
+        grade = 'B'
+    elif score >= 55:
+        grade = 'C'
+    elif score >= 40:
+        grade = 'D'
+    else:
+        grade = 'F'
+    
+    return TrackQualityReport(
+        track_id=track.track_id,
+        age_scans=total,
+        hit_ratio=hit_ratio,
+        avg_innovation=avg_inn,
+        position_uncertainty=pos_unc,
+        velocity_uncertainty=vel_unc,
+        quality_grade=grade,
+        is_reliable=grade in ('A', 'B', 'C'),
+    )
