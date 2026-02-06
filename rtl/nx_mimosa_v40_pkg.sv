@@ -139,6 +139,41 @@ package nx_mimosa_v40_pkg;
         logic                  is_high_dynamics;
     } classifier_features_t;
     
+    // v4.1 expanded classifier features (kinematic + RF + micro-Doppler + ECM)
+    // [REQ-FE-001..005] Full feature vector for multi-domain classification
+    typedef struct packed {
+        // Kinematic features (11)
+        logic signed [DW-1:0] spd_avg;
+        logic signed [DW-1:0] spd_peak;
+        logic signed [DW-1:0] omega_peak;
+        logic signed [DW-1:0] omega_avg;
+        logic signed [DW-1:0] g_load_avg;
+        logic signed [DW-1:0] g_load_peak;
+        logic signed [DW-1:0] nis_cv_avg;
+        logic signed [DW-1:0] nis_cv_peak;
+        logic signed [DW-1:0] mu_ct_peak;
+        logic signed [DW-1:0] mu_ca_peak;
+        logic signed [DW-1:0] heading_reversals;
+        // RF observable features (5)
+        logic signed [DW-1:0] rcs_amplitude;
+        logic signed [DW-1:0] rcs_variance;
+        logic signed [DW-1:0] snr_db;
+        logic signed [DW-1:0] doppler_spread;
+        logic signed [DW-1:0] range_m;
+        // Micro-Doppler features (3)
+        logic signed [DW-1:0] micro_doppler_type;  // 0-7 enum
+        logic signed [DW-1:0] micro_doppler_conf;  // [0,1] confidence
+        logic signed [DW-1:0] micro_doppler_freq;  // Peak μD frequency (Hz)
+        // Derived flags (7)
+        logic                  is_maneuvering;
+        logic                  is_high_dynamics;
+        logic                  ecm_detected;
+        logic signed [DW-1:0] ecm_score;           // 0-8 aggregated score
+        logic                  false_target;
+        logic                  bird_flag;
+        logic                  balloon_flag;
+    } classifier_features_v41_t;
+    
     //==========================================================================
     // [REQ-SYS-005] Transition Probability Matrix (6×6) — Q15.16
     //==========================================================================

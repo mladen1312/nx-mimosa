@@ -1,5 +1,5 @@
 """
-NX-MIMOSA v4.0 "SENTINEL" — Platform-Aware Variable-Structure IMM Tracker
+NX-MIMOSA v4.1 "SENTINEL" — Platform-Aware Variable-Structure IMM Tracker
 ===========================================================================
 [REQ-V40-01] 6-model IMM bank: CV, CT+, CT-, CA, Jerk, Ballistic
 [REQ-V40-02] Platform identification from kinematics (speed/g/altitude)
@@ -10,6 +10,12 @@ NX-MIMOSA v4.0 "SENTINEL" — Platform-Aware Variable-Structure IMM Tracker
 [REQ-V40-07] Per-model RTS smoother (window + full-track)
 [REQ-V40-08] 4 output streams: realtime, refined, offline, intent
 [REQ-V40-09] Graceful fallback to Unknown (all 6 models) if ID fails
+[REQ-V41-01] Multi-domain classifier (111 platforms, 31 classes)
+[REQ-V41-02] Intent prediction (16 types: terminal dive, sea skimming, etc.)
+[REQ-V41-03] ECM detection & adaptive Q boost (noise/deception/DRFM/chaff)
+[REQ-V41-04] Threat level fusion (classifier + intent + ECM)
+[REQ-V41-05] False target rejection (birds, balloons, clutter)
+[REQ-V41-06] Alert stream for fire control (TTI, evasion, sea skim)
 
 Author: Dr. Mladen Mešter / Nexellum d.o.o.
 License: AGPL v3 (open-source) | Commercial license available
@@ -20,7 +26,26 @@ from numpy.linalg import inv, pinv, LinAlgError
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-import json, os
+import json, os, math
+
+# v4.1: Import classifier pipeline
+try:
+    from nx_mimosa_intent_classifier import (
+        NxMimosaClassifierPipeline, ClassificationResult,
+        IntentType, ThreatLevel, ECMStatus,
+    )
+    _HAS_CLASSIFIER = True
+except ImportError:
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from nx_mimosa_intent_classifier import (
+            NxMimosaClassifierPipeline, ClassificationResult,
+            IntentType, ThreatLevel, ECMStatus,
+        )
+        _HAS_CLASSIFIER = True
+    except ImportError:
+        _HAS_CLASSIFIER = False
 
 GRAVITY = 9.80665
 EPS = 1e-10
@@ -40,6 +65,17 @@ class IntentState:
     threat_level: float = 0.5
     active_models: List[str] = field(default_factory=list)
     n_active_models: int = 3
+    # --- v4.1 fields ---
+    platform_class: str = "unknown"            # [REQ-V41-01] 31-class taxonomy
+    intent: str = "unknown"                     # [REQ-V41-02] 16-type intent
+    intent_confidence: float = 0.0
+    ecm_status: str = "clean"                   # [REQ-V41-03] ECM detection
+    ecm_q_scale: float = 1.0                    # Q boost under jamming
+    dive_angle_deg: float = 0.0                 # Terminal dive angle
+    time_to_impact_s: float = float('inf')      # TTI estimate
+    altitude_rate_mps: float = 0.0              # Vertical velocity
+    is_false_target: bool = False               # [REQ-V41-05] False target flag
+    alerts: List[str] = field(default_factory=list)  # [REQ-V41-06] Fire control alerts
 
 # =============================================================================
 # Motion Model Builders
@@ -600,6 +636,25 @@ class NxMimosaV40Sentinel:
         self.identifier = PlatformIdentifier(self.platform_db)
         self.intent_pred = IntentPredictor()
         self.intent_state = IntentState()
+        
+        # [REQ-V41-01..06] v4.1 Multi-domain classifier pipeline
+        self._cls_result = None  # Last ClassificationResult from pipeline
+        self._ecm_q_scale = 1.0  # ECM-driven Q multiplier
+        if _HAS_CLASSIFIER:
+            # Resolve DB path for v3 (multi-domain, 111 platforms)
+            _db_v3_candidates = [
+                'data/platform_db_v3.json',
+                os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','data','platform_db_v3.json'),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)),'data','platform_db_v3.json'),
+            ]
+            _db_v3_path = next((p for p in _db_v3_candidates if os.path.exists(p)), None)
+            if _db_v3_path:
+                self.cls_pipeline = NxMimosaClassifierPipeline(
+                    db_path=_db_v3_path, dt=dt, history_len=window_size)
+            else:
+                self.cls_pipeline = None
+        else:
+            self.cls_pipeline = None
         # Per-model history for RTS
         self.xf_h = []; self.Pf_h = []; self.xp_h = []; self.Pp_h = []
         self.F_h = []; self.mu_h = []; self.act_h = []; self.xc_h = []
@@ -856,11 +911,73 @@ class NxMimosaV40Sentinel:
         _Si_cv = safe_inv(_S_cv)
         cv_nis_inst = float(_nu_cv @ _Si_cv @ _nu_cv)
         
+        # v4.0 legacy classifier (still used for VS-IMM adapt via old platform_db)
         plat,conf = self.identifier.update(xc[:2], xc[2:4], self.dt,
                                             mu=self.mu, cv_nis=cv_nis_inst,
                                             omega=self.omega)
         pd = self.platform_db.get(plat, self.platform_db.get("Unknown",{}))
         if conf>=0.35 and plat!="Unknown" and self.step > 20: self._vs_adapt(pd)
+        
+        # =====================================================================
+        # [REQ-V41-01..06] v4.1 Multi-domain classifier + intent + ECM
+        # Feeds: speed, g-load, altitude, omega, heading, vz, NIS, RCS, SNR
+        # Returns: ClassificationResult with intent, ECM status, threat, alerts
+        # =====================================================================
+        sp = np.linalg.norm(xc[2:4])
+        ag = 0.0
+        if self.xc_h:
+            ag = np.linalg.norm(xc[2:4] - self.xc_h[-1][2:4]) / (self.dt * GRAVITY + 1e-10)
+        
+        # Extract heading from velocity vector
+        heading_rad = math.atan2(xc[3], xc[2]) if sp > 5 else 0.0
+        
+        # Altitude estimate: use y-component (or z if 3D)
+        alt_m = abs(xc[1]) if len(xc) >= 2 else 0.0
+        
+        # Vertical velocity (approximate from position change)
+        vz_mps = 0.0
+        if self.xc_h and len(self.xc_h[-1]) >= 2:
+            vz_mps = (xc[1] - self.xc_h[-1][1]) / self.dt
+        
+        if self.cls_pipeline is not None and self.step > 5:
+            # Full v4.1 pipeline: classifier + intent + ECM
+            cls_result = self.cls_pipeline.update(
+                speed_mps=sp, accel_g=ag, altitude_m=alt_m,
+                omega_radps=abs(self.omega), heading_rad=heading_rad,
+                vz_mps=vz_mps, nis_cv=cv_nis_inst,
+                rcs_dbsm=0.0,   # TODO: feed from radar front-end
+                snr_db=25.0,    # TODO: feed from radar front-end
+                doppler_hz=0.0, # TODO: feed from radar front-end
+                range_m=np.linalg.norm(xc[:2]),
+            )
+            self._cls_result = cls_result
+            
+            # [REQ-V41-03] ECM-driven Q boost
+            self._ecm_q_scale = cls_result.ecm_status != ECMStatus.CLEAN
+            if hasattr(self.cls_pipeline, 'ecm_detector'):
+                self._ecm_q_scale = self.cls_pipeline.ecm_detector.q_scale_factor
+            
+            # [REQ-V41-01] VS-IMM adapt from v4.1 classifier preferred_models
+            if cls_result.confidence >= 0.50 and self.step > 20:
+                pref_v41 = cls_result.preferred_models
+                if pref_v41 and set(pref_v41) != set(self.active_models):
+                    # Merge: v4.1 classifier overrides when confident
+                    na = list(set(["CV"] + pref_v41))
+                    na = [m for m in na if m in ALL_MODELS]
+                    if na != self.active_models:
+                        old_mu = dict(self.mu)
+                        self.active_models = na
+                        t = sum(old_mu.get(m, 0) for m in na)
+                        n = len(na)
+                        self.mu = {m: old_mu.get(m, 0)/t for m in na} if t > 0.01 else {m: 1/n for m in na}
+                        bm = max(old_mu, key=old_mu.get) if old_mu else "CV"
+                        for m in na:
+                            if old_mu.get(m, 0) < 0.01:
+                                self.x[m] = self._ms(self.x[bm], MODEL_DIMS[bm], MODEL_DIMS[m])
+                                self.P[m] = self._mc(self.P[bm], MODEL_DIMS[bm], MODEL_DIMS[m])
+                        self._rebuild_tpm()
+        else:
+            cls_result = None
         
         # 6b. Emergency reactivation: if CV-only but velocity change is large
         if len(self.active_models) == 1 and self.active_models[0] == "CV":
@@ -877,16 +994,19 @@ class NxMimosaV40Sentinel:
                     self.q_base = self.q_base_initial  # Full reset
 
         # 7. Intent + Q scale
-        sp = np.linalg.norm(xc[2:4]); ag = 0
-        if self.xc_h: ag = np.linalg.norm(xc[2:4]-self.xc_h[-1][2:4])/(self.dt*GRAVITY+1e-10)
         phase,pc = self.intent_pred.predict(pd, sp, ag, self.mu)
         raw_q_scale = pd.get("intent_phases",{}).get(phase,{}).get("q_scale",1.0)
+        
+        # [REQ-V41-03] ECM Q boost: multiply intent-based Q by ECM factor
+        ecm_q_factor = self._ecm_q_scale if isinstance(self._ecm_q_scale, (int, float)) else 1.0
+        raw_q_scale = raw_q_scale * max(1.0, ecm_q_factor)
+        
         # Cap q_scale and smooth transitions asymmetrically
         # Fast ramp-up (maneuver detected), slow ramp-down (benign detected)
         if self.step < 20:
             self.q_scale = 1.0
         else:
-            target_qs = min(raw_q_scale, 3.0)
+            target_qs = min(raw_q_scale, 5.0)  # v4.1: allow up to 5x under ECM
             if target_qs > self.q_scale:
                 self.q_scale = 0.4 * self.q_scale + 0.6 * target_qs  # Fast up
             else:
@@ -944,16 +1064,57 @@ class NxMimosaV40Sentinel:
         self.F_h.append(Fu); self.mu_h.append(dict(self.mu))
         self.act_h.append(list(self.active_models)); self.xc_h.append(xc.copy())
 
-        # 10. Intent
+        # 10. Build IntentState — merge v4.0 legacy + v4.1 pipeline
         cat = pd.get("category","unknown")
         thr = {"fighter":0.6,"bomber":0.4,"transport":0.1,"aew":0.2,"ballistic_missile":0.9,
                "hypersonic_missile":0.95,"cruise_missile":0.8,"sam":0.85,"mlrs":0.7,
                "small_drone":0.3,"fpv_kamikaze":0.7,"loitering_munition":0.6}.get(cat,0.5)
         if phase in ("terminal","attack","engagement"): thr=min(thr*1.3,1)
         elif phase in ("cruise","patrol","hover"): thr*=0.8
-        self.intent_state = IntentState(plat, cat, conf, phase, pc,
+        
+        # v4.1 classifier overrides when available
+        _plat_class = "unknown"
+        _intent = "unknown"
+        _intent_conf = 0.0
+        _ecm_str = "clean"
+        _ecm_q = 1.0
+        _dive = 0.0
+        _tti = float('inf')
+        _alt_rate = vz_mps
+        _is_false = False
+        _alerts = []
+        
+        if cls_result is not None:
+            _plat_class = cls_result.platform_class
+            _intent = cls_result.intent.value if hasattr(cls_result.intent, 'value') else str(cls_result.intent)
+            _intent_conf = cls_result.intent_confidence
+            _ecm_str = cls_result.ecm_status.value if hasattr(cls_result.ecm_status, 'value') else str(cls_result.ecm_status)
+            _ecm_q = ecm_q_factor
+            _alerts = list(cls_result.alerts)
+            _is_false = _plat_class.startswith("false_target")
+            
+            # Upgrade threat from v4.1 if higher
+            if hasattr(cls_result.threat_level, 'value'):
+                v41_thr = {0: 0.0, 1: 0.3, 2: 0.5, 3: 0.7, 4: 1.0}.get(
+                    cls_result.threat_level.value, 0.5)
+                thr = max(thr, v41_thr)
+        
+        self.intent_state = IntentState(
+            plat, cat, conf, phase, pc,
             pd.get("max_g",30), pd.get("max_speed_mps",3500), thr,
-            list(self.active_models), len(self.active_models))
+            list(self.active_models), len(self.active_models),
+            # v4.1 fields
+            platform_class=_plat_class,
+            intent=_intent,
+            intent_confidence=_intent_conf,
+            ecm_status=_ecm_str,
+            ecm_q_scale=_ecm_q,
+            dive_angle_deg=_dive,
+            time_to_impact_s=_tti,
+            altitude_rate_mps=_alt_rate,
+            is_false_target=_is_false,
+            alerts=_alerts,
+        )
         return xc[:2], Pc[:2,:2], self.intent_state
 
     def _vs_adapt(self, pd):
