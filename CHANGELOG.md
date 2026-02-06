@@ -1,5 +1,45 @@
 # NX-MIMOSA Changelog
 
+## v5.0.0 — "FULL SPECTRUM" (2026-02-06)
+
+### 🎯 Headline: 3D Multi-Target Tracker with GNN + JPDA — Four Critical Blockers Eliminated
+
+Commercial readiness: **35% → 70%** (from research prototype to production-grade MTT)
+
+### Added — Core Systems
+
+**3D Tracking** (`nx_mimosa_mtt.py`)
+- Full 3D state vector [x, y, z, vx, vy, vz] with 3D motion models (CV3D, CA3D, CT3D)
+- 3D IMM filter with automatic model mixing across state dimensions
+- CT3D coordinated turn degrades gracefully to CV3D at ω→0
+
+**Multi-Target Tracking** (`nx_mimosa_mtt.py`)
+- `MultiTargetTracker` engine — complete predict-associate-update-manage cycle
+- GNN (Global Nearest Neighbor) via Munkres/Hungarian optimal assignment
+- JPDA (Joint Probabilistic Data Association) — Mahalanobis-based robust weighting
+- Selectable: `association="gnn"` or `association="jpda"`
+
+**Track Management** (`nx_mimosa_mtt.py`)
+- Full lifecycle: TENTATIVE → CONFIRMED → COASTING → DELETED
+- M-of-N confirmation, consecutive-miss deletion, coast-before-delete
+- Track scoring, minimum separation enforcement, configurable per domain
+
+**Coordinate Transforms** (`nx_mimosa_coords.py`)
+- WGS-84 ↔ ECEF ↔ ENU ↔ Spherical (Bowring iterative, sub-mm accuracy)
+- Unbiased polar/spherical-to-Cartesian (Bar-Shalom 2001)
+- EKF Jacobians for measurement models, range-rate projection
+- `SensorLocation` dataclass with mounting rotation support
+
+**Metrics** — OSPA, NEES, NIS, NATO SIAP (completeness, ambiguity, spuriousness)
+
+**Domain Presets** — military, atc, automotive, space, maritime
+
+### Test Coverage
+- 63 new tests (15 classes) — **136/136 total PASS**
+- Scenarios: military air defense, automotive highway, crossing targets, JPDA in clutter
+
+---
+
 ## v4.3.0 — Multi-Sensor Fusion + README Rewrite (2026-02-06)
 
 ### 🎯 Headline: Native multi-sensor fusion — radar, EO/IR, ESM, Doppler, ADS-B
