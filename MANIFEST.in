@@ -1,0 +1,11 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include pyproject.toml
+recursive-include nx_mimosa *.py *.json *.yaml py.typed
+recursive-include data *.json
+recursive-include config *.yaml
+recursive-include tests *.py
+recursive-include benchmarks *.py *.json *.md
+recursive-include docs *.md *.rst
+recursive-include examples *.py
