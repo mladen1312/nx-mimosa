@@ -1,12 +1,12 @@
-# NX-MIMOSA v5.9.3 Sphinx Configuration
+# NX-MIMOSA v6.0.1 Sphinx Configuration
 import os, sys
 sys.path.insert(0, os.path.abspath('../..'))
 
 project = 'NX-MIMOSA'
 copyright = '2026, Nexellum d.o.o.'
 author = 'Dr. Mladen Mešter'
-release = '5.9.3'
-version = '5.9'
+release = '6.0.1'
+version = '6.0'
 
 extensions = [
     'sphinx.ext.autodoc',

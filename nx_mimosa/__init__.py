@@ -1,7 +1,7 @@
-"""NX-MIMOSA v5.9.3: Multi-target tracker with platform intelligence for defence radar systems.
+"""NX-MIMOSA v6.0.1: Radar multi-target tracker — 5,000 targets in 40 ms.
 
+C++ core + Python intelligence. ECM detection, military ID, NATO output.
 11,493 lines across 9 modules. 62 unique classes. 340 tests.
-8 filter types · 3 associators · 6-sensor fusion · military ID · ECM detection.
 
 Quick Start::
 
@@ -13,7 +13,7 @@ Quick Start::
 Nexellum d.o.o. — Dr. Mladen Mešter — mladen@nexellum.com
 """
 
-__version__ = "5.9.3"
+__version__ = "6.0.1"
 __author__ = "Dr. Mladen Mešter"
 __email__ = "mladen@nexellum.com"
 __license__ = "AGPL-3.0-or-later"

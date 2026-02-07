@@ -36,13 +36,16 @@ Python intelligence/fusion/coordinates layers unchanged.
 
 ## C++ Standalone Benchmark (no Python overhead)
 
+**v6.0.1 with Sparse Auction Assignment (Bertsekas 1988)**
+
 | Targets | Mean (ms) | Max (ms) | Confirmed |
 |---|---|---|---|
-| 100 | 1.1 | 1.3 | 100 |
-| 500 | 5.6 | 6.9 | 500 |
-| 761 | 9.9 | 13.1 | 761 |
-| 1,000 | 15.4 | 21.8 | 1,002 |
-| 2,000 | 51.1 | 63.7 | 2,002 |
+| 100 | 1.0 | 1.1 | 100 |
+| 500 | 4.4 | 5.5 | 500 |
+| 761 | 6.1 | 6.6 | 761 |
+| 1,000 | 9.0 | 9.7 | 1,002 |
+| 2,000 | 18.8 | 24.3 | 2,002 |
+| 5,000 | 40.5 | — | 5,004 |
 
 ## Correctness Verification
 

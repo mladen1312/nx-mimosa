@@ -492,101 +492,134 @@ private:
 
 
 // ============================================================
-// LAPJV — Jonker-Volgenant Linear Assignment (O(n²) avg)
-// Adapted from Crouse 2016 / scipy C implementation
+// SPARSE AUCTION ASSIGNMENT — O(n·k) for KDTree-gated problems
+// [REQ-V60-SPARSE-01] Scales to 2000+ tracks without dense matrix
 // ============================================================
-namespace lapjv {
+struct SparseEntry { int row, col; double cost; };
 
-inline void solve(const double* cost, int n_rows, int n_cols,
-                  int* row_assign, int* col_assign) {
-    // Simplified auction / shortest-augmenting-path for sparse problems
-    // For production: use full Jonker-Volgenant.
-    // Here: scipy-compatible via row reduction + augmentation.
+namespace assignment {
 
-    std::vector<double> u(n_rows, 0), v(n_cols, 0);  // dual variables
+// Sparse Bertsekas auction algorithm (Bertsekas 1988)
+// Only iterates over KDTree candidate pairs — no dense n×m allocation.
+// Complexity: O(n·k·log(k)) where k = avg candidates per row (~4 from KDTree)
+inline void sparse_auction(const std::vector<std::vector<std::pair<int,double>>>& row_candidates,
+                           int n_rows, int n_cols,
+                           int* row_assign, int* col_assign,
+                           double epsilon = 0.01, int max_iter = 200) {
+    std::fill(row_assign, row_assign + n_rows, -1);
+    std::fill(col_assign, col_assign + n_cols, -1);
+
+    std::vector<double> prices(n_cols, 0.0);
+    std::vector<int> unassigned;
+    unassigned.reserve(n_rows);
+    for (int i = 0; i < n_rows; ++i) {
+        if (!row_candidates[i].empty())
+            unassigned.push_back(i);
+    }
+
+    for (int iter = 0; iter < max_iter && !unassigned.empty(); ++iter) {
+        std::vector<int> still_unassigned;
+        still_unassigned.reserve(unassigned.size());
+
+        for (int i : unassigned) {
+            const auto& cands = row_candidates[i];
+            if (cands.empty()) continue;
+
+            // Find best and second-best value (value = -cost - price)
+            double best_val = -INF_COST, second_val = -INF_COST;
+            int best_j = -1;
+
+            for (auto& [j, c] : cands) {
+                double val = -c - prices[j];
+                if (val > best_val) {
+                    second_val = best_val;
+                    best_val = val;
+                    best_j = j;
+                } else if (val > second_val) {
+                    second_val = val;
+                }
+            }
+
+            if (best_j < 0) continue;
+
+            // Bid increment
+            double bid = best_val - second_val + epsilon;
+            prices[best_j] += bid;
+
+            // Assign i → best_j, displacing previous owner
+            int prev_owner = col_assign[best_j];
+            if (prev_owner >= 0) {
+                row_assign[prev_owner] = -1;
+                still_unassigned.push_back(prev_owner);
+            }
+            row_assign[i] = best_j;
+            col_assign[best_j] = i;
+        }
+
+        unassigned = std::move(still_unassigned);
+
+        // Adaptive epsilon scaling for convergence
+        if (iter > 0 && iter % 50 == 0) epsilon *= 0.5;
+    }
+}
+
+// Dense fallback for small problems (< 200 rows) using shortest augmenting path
+inline void dense_solve(const double* cost, int n_rows, int n_cols,
+                        int* row_assign, int* col_assign) {
+    std::vector<double> u(n_rows, 0), v(n_cols, 0);
     std::fill(row_assign, row_assign + n_rows, -1);
     std::fill(col_assign, col_assign + n_cols, -1);
 
     // Column reduction
     for (int j = 0; j < n_cols; ++j) {
-        double min_val = INF_COST;
-        int min_row = -1;
+        double min_val = INF_COST; int min_row = -1;
         for (int i = 0; i < n_rows; ++i) {
             double c = cost[i * n_cols + j];
             if (c < min_val) { min_val = c; min_row = i; }
         }
         v[j] = min_val;
         if (min_row >= 0 && row_assign[min_row] < 0) {
-            row_assign[min_row] = j;
-            col_assign[j] = min_row;
+            row_assign[min_row] = j; col_assign[j] = min_row;
         }
     }
 
-    // Augmentation for unassigned rows
     for (int i = 0; i < n_rows; ++i) {
         if (row_assign[i] >= 0) continue;
-
-        // Find shortest augmenting path (Dijkstra-like)
         std::vector<double> d(n_cols, INF_COST);
         std::vector<int> pred(n_cols, -1);
         std::vector<bool> scanned(n_cols, false);
-
-        for (int j = 0; j < n_cols; ++j) {
-            d[j] = cost[i * n_cols + j] - u[i] - v[j];
-            pred[j] = i;
-        }
+        for (int j = 0; j < n_cols; ++j) { d[j] = cost[i*n_cols+j]-u[i]-v[j]; pred[j]=i; }
 
         int j_sink = -1;
         while (j_sink < 0) {
-            // Find unscanned col with min d
-            double min_d = INF_COST;
-            int j_min = -1;
-            for (int j = 0; j < n_cols; ++j) {
+            double min_d = INF_COST; int j_min = -1;
+            for (int j = 0; j < n_cols; ++j)
                 if (!scanned[j] && d[j] < min_d) { min_d = d[j]; j_min = j; }
-            }
             if (j_min < 0 || min_d >= INF_COST - 1) break;
-
             scanned[j_min] = true;
-            if (col_assign[j_min] < 0) {
-                j_sink = j_min;
-            } else {
+            if (col_assign[j_min] < 0) { j_sink = j_min; }
+            else {
                 int i2 = col_assign[j_min];
                 for (int j = 0; j < n_cols; ++j) {
                     if (scanned[j]) continue;
-                    double new_d = min_d + cost[i2 * n_cols + j] - u[i2] - v[j];
-                    if (new_d < d[j]) {
-                        d[j] = new_d;
-                        pred[j] = i2;
-                    }
+                    double nd = min_d + cost[i2*n_cols+j] - u[i2] - v[j];
+                    if (nd < d[j]) { d[j] = nd; pred[j] = i2; }
                 }
             }
         }
-
-        // Update dual variables
-        for (int j = 0; j < n_cols; ++j) {
-            if (scanned[j]) {
-                double delta = d[j] - d[j_sink >= 0 ? j_sink : 0];
-                u[col_assign[j] >= 0 ? col_assign[j] : i] += delta;
-                v[j] -= delta;
-            }
-        }
-
-        // Augment along path
         if (j_sink >= 0) {
+            for (int j = 0; j < n_cols; ++j)
+                if (scanned[j]) { double delta = d[j]-d[j_sink]; v[j]-=delta; }
             int j = j_sink;
             while (true) {
-                int i2 = pred[j];
-                col_assign[j] = i2;
-                int prev_j = row_assign[i2];
-                row_assign[i2] = j;
-                if (i2 == i) break;
-                j = prev_j;
+                int i2 = pred[j]; col_assign[j]=i2; int pj=row_assign[i2]; row_assign[i2]=j;
+                if (i2==i) break; j=pj;
             }
         }
     }
 }
 
-}  // namespace lapjv
+}  // namespace assignment
 
 
 // ============================================================
@@ -711,44 +744,60 @@ private:
         for (int i = 0; i < n_trk; ++i)
             track_pos[i] = tracks[active_idx[i]].imm.position();
 
-        // Sparse candidate pairs via KDTree
-        struct Pair { int ti, mi; };
-        std::vector<Pair> candidates;
-        candidates.reserve(n_trk * 4);  // expect ~4 candidates per track
+        // Build sparse candidate list per track via KDTree
+        // row_candidates[i] = vector of (meas_idx, mahalanobis_cost)
+        std::vector<std::vector<std::pair<int,double>>> row_candidates(n_trk);
 
+        #pragma omp parallel for schedule(dynamic) if(n_trk > 200)
         for (int i = 0; i < n_trk; ++i) {
             double q[3] = {track_pos[i][0], track_pos[i][1], track_pos[i][2]};
             std::vector<int> nearby;
             tree.query_ball(q, cfg.coarse_gate_m, nearby);
-            for (int j : nearby)
-                candidates.push_back({i, j});
+            for (int j : nearby) {
+                Vec3 z(meas[j*3], meas[j*3+1], meas[j*3+2]);
+                double d2 = tracks[active_idx[i]].imm.mahalanobis(z);
+                if (d2 < cfg.gate_threshold)
+                    row_candidates[i].emplace_back(j, d2);
+            }
         }
 
-        // Build cost matrix (dense, but only compute Mahalanobis for candidates)
-        std::vector<double> cost(n_trk * n_meas, INF_COST);
-
-        #pragma omp parallel for schedule(dynamic) if(candidates.size() > 1000)
-        for (int c = 0; c < (int)candidates.size(); ++c) {
-            int ti = candidates[c].ti;
-            int mi = candidates[c].mi;
-            Vec3 z(meas[mi*3], meas[mi*3+1], meas[mi*3+2]);
-            double d2 = tracks[active_idx[ti]].imm.mahalanobis(z);
-            if (d2 < cfg.gate_threshold)
-                cost[ti * n_meas + mi] = d2;
-        }
-
-        // Solve assignment
+        // Choose solver based on problem density
         std::vector<int> row_assign(n_trk, -1), col_assign(n_meas, -1);
-        lapjv::solve(cost.data(), n_trk, n_meas, row_assign.data(), col_assign.data());
+
+        // Count total candidates to decide strategy
+        size_t total_cands = 0;
+        for (auto& rc : row_candidates) total_cands += rc.size();
+        size_t dense_size = (size_t)n_trk * n_meas;
+
+        if (total_cands < dense_size / 4 || n_trk > 500) {
+            // SPARSE AUCTION — dominant for 500+ tracks
+            assignment::sparse_auction(row_candidates, n_trk, n_meas,
+                                       row_assign.data(), col_assign.data());
+        } else {
+            // DENSE FALLBACK — small problems (< 500 tracks)
+            std::vector<double> cost(dense_size, INF_COST);
+            for (int i = 0; i < n_trk; ++i)
+                for (auto& [j, c] : row_candidates[i])
+                    cost[i * n_meas + j] = c;
+            assignment::dense_solve(cost.data(), n_trk, n_meas,
+                                    row_assign.data(), col_assign.data());
+        }
 
         // Filter gated assignments
         std::vector<bool> trk_assigned(n_trk, false), meas_assigned(n_meas, false);
         for (int i = 0; i < n_trk; ++i) {
             int j = row_assign[i];
-            if (j >= 0 && j < n_meas && cost[i * n_meas + j] < cfg.gate_threshold) {
-                assignments.push_back({i, j});
-                trk_assigned[i] = true;
-                meas_assigned[j] = true;
+            if (j >= 0 && j < n_meas) {
+                // Verify this pair was actually gated
+                bool valid = false;
+                for (auto& [mj, mc] : row_candidates[i]) {
+                    if (mj == j && mc < cfg.gate_threshold) { valid = true; break; }
+                }
+                if (valid) {
+                    assignments.push_back({i, j});
+                    trk_assigned[i] = true;
+                    meas_assigned[j] = true;
+                }
             }
         }
         for (int i = 0; i < n_trk; ++i)

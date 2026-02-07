@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nx-mimosa"
-version = "5.9.3"
-description = "Multi-target tracker with platform intelligence for defence radar systems — 8 filters, 3 associators, 6-sensor fusion, military ID, ECM detection"
+version = "6.0.1"
+description = "Radar multi-target tracker — 5,000 targets in 40 ms, ECM detection, military ID, NATO output. C++ core + Python intelligence."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.9"

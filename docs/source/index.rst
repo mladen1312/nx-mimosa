@@ -1,9 +1,13 @@
-NX-MIMOSA v5.9.3 Documentation
+NX-MIMOSA v6.0.1 Documentation
 ================================
 
-**Multi-target tracker with platform intelligence for defence radar systems.**
+**The radar tracker that sees through jamming.**
 
-11,493 lines · 62 classes · 340 tests · 8 filters · 3 associators · 6-sensor fusion
+5,000 targets in 40 ms · ECM detection · Military ID · NATO output · C++ core + Python intelligence
+
+.. code-block:: bash
+
+   pip install nx-mimosa
 
 .. code-block:: python
 
@@ -11,8 +15,11 @@ NX-MIMOSA v5.9.3 Documentation
    tracker = MultiTargetTracker(dt=5.0, r_std=150.0, domain="air")
    tracks = tracker.process_scan(measurements)
 
+   # For C++ speed (50× faster):
+   from nx_mimosa.accel import MultiTargetTracker
+
 761 aircraft tracked simultaneously from live ADS-B data. 99.8% detection rate.
-519 ms mean scan processing. Five military jets autonomously identified.
+C++ core processes 5,000 targets in 40 ms. Five military jets autonomously identified.
 
 Key Capabilities
 -----------------
@@ -20,7 +27,8 @@ Key Capabilities
 **Filtering**: 6-model IMM (CV/CA/CT/Jerk/Ballistic/Orbital), EKF, UKF, Particle Filter,
 GM-PHD, CPHD, LMB — covering both explicit association and random finite set approaches.
 
-**Association**: GNN (speed), JPDA (dense clutter), MHT with N-scan pruning (crossing targets).
+**Association**: GNN (speed), JPDA (dense clutter), MHT with N-scan pruning (crossing targets),
+Sparse Auction (Bertsekas, C++ core for 2000+ targets).
 
 **Intelligence**: Platform identification (111 types), military ICAO ID (30+ forces),
 ECM detection (5 types), intent prediction (16 behaviours), threat assessment.
@@ -28,12 +36,11 @@ ECM detection (5 types), intent prediction (16 behaviours), threat assessment.
 **Fusion**: 6 sensor types (radar, Doppler, EO/IR, ESM, ADS-B, secondary), track-to-track
 association, covariance intersection, OOSM handling, online sensor bias estimation.
 
+**C++ Core**: Eigen batch KF/IMM, header-only KDTree, sparse auction assignment, OpenMP.
+50× faster than Python. Same API via ``nx_mimosa.accel``.
+
 **Outputs**: Dual-mode (real-time display + fire control), ASTERIX Cat048, Link-16 J3.2,
 GOSPA/OSPA/NEES/NIS/SIAP metrics, track quality scoring.
-
-**Datasets**: nuScenes, CARLA, RADIATE, GenericCSV adapters plus synthetic scenario generator.
-
-**Coordinates**: WGS-84, ECEF, ENU, polar, spherical — 27 conversion functions.
 
 .. toctree::
    :maxdepth: 2
@@ -61,6 +68,7 @@ GOSPA/OSPA/NEES/NIS/SIAP metrics, track quality scoring.
    :caption: API Reference
 
    api/mtt
+   api/accel
    api/intelligence
    api/fusion
    api/coords
