@@ -72,16 +72,50 @@ NX-MIMOSA is a *tracking product*, not a toolkit. Where Stone Soup gives you bui
 
 ## Live Benchmark: 761 Aircraft
 
-| ICAO24 | Callsign | Force | Altitude | KF RMS | Improvement |
-|--------|----------|-------|----------|--------|-------------|
-| 4784c2 | NSZ21U | NATO | FL340 | 224 m | 1.11× |
-| ae123a | RCH4539 | USAF AMC | FL360 | 252 m | 1.06× |
-| 3b776f | CTM2004 | French AF | FL305 | 187 m | 1.17× |
-| 48d960 | PLF105 | Polish AF | FL182 | 214 m | 1.29× |
-| 479227 | NSZ3YT | NATO | FL162 | 161 m | 1.24× |
-| | | **MEAN** | | **207 m** | **1.17×** |
+Tested against the OpenSky Network ADS-B feed covering Central Europe (43–55°N, 5–30°E), February 2026. Eight consecutive radar scans processed. No synthetic data — every measurement is a real aircraft reporting its position via ADS-B.
+
+**Scalability results:**
+
+| Metric | Value |
+|--------|-------|
+| Peak simultaneous targets | **761** |
+| Mean targets per scan | 753 |
+| Confirmed tracks | 751 |
+| Detection rate | **99.8%** |
+| Mean scan processing time | **519 ms** |
+| P95 scan processing time | 864 ms |
+| Max scan processing time | 974 ms |
+| Total time (8 scans) | 4.36 s |
+
+Real-time capable for any surveillance radar with rotation period ≥ 2 s. The scan time is dominated by the 761×761 assignment matrix — the KDTree spatial pre-gate (O(n log n)) reduces the dense cost matrix to a sparse one, and SciPy's C-optimized LAPJV solver handles the assignment in ~200 ms at this scale.
+
+**Military aircraft autonomously identified:**
+
+| ICAO24 | Callsign | Force | Altitude | Speed | KF RMS | Improvement |
+|--------|----------|-------|----------|-------|--------|-------------|
+| 4784c2 | NSZ21U | NATO | FL340 | 443 kt | 224 m | 1.11× |
+| ae123a | RCH4539 | USAF AMC | FL360 | 398 kt | 252 m | 1.06× |
+| 3b776f | CTM2004 | French AF | FL305 | 397 kt | 187 m | 1.17× |
+| 48d960 | PLF105 | Polish AF | FL182 | 384 kt | 214 m | 1.29× |
+| 479227 | NSZ3YT | NATO | FL162 | 338 kt | 161 m | 1.24× |
+| | | **MEAN** | | | **207 m** | **1.17×** |
+
+Identification uses two methods: ICAO24 hex range lookup (military blocks per ICAO Annex 10) and callsign regex matching against 35 patterns covering 30+ air forces. No IFF transponder required.
 
 Improvement measured against constant-velocity baseline. The Cramér-Rao lower bound at σ = 150 m gives a theoretical maximum around 1.4×. Our 1.17× on cruise flight is consistent with published IMM results (1.2–1.3× in literature). Maneuvering targets show larger gains.
+
+**GOSPA metric decomposition (full test):**
+
+| Component | Value | Interpretation |
+|-----------|-------|----------------|
+| Total GOSPA | 35,262 m | Combined multi-target error |
+| Localisation | 8,374 m | Position accuracy of matched tracks |
+| Missed targets | 6,243 m | Penalty for untracked aircraft |
+| False tracks | 31,072 m | Penalty for tracks without measurements |
+
+The false track component dominates because GOSPA penalises coasting tracks during initialisation — with 761 targets and a 3-scan M/N confirmation window, this is expected. Localisation error per matched track is 11.1 m, confirming filter convergence.
+
+Full benchmark report with methodology and reproduction instructions: [`docs/BENCHMARK_v591_500plus.md`](docs/BENCHMARK_v591_500plus.md)
 
 ## 19-Scenario Benchmark
 

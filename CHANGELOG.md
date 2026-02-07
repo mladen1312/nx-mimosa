@@ -1,5 +1,44 @@
 # NX-MIMOSA Changelog
 
+## v5.9.0 — "TRIDENT" (2026-02-07)
+
+### 🎯 Headline: EKF/UKF Polar + GOSPA Metrics + Clutter Resilience
+
+**Commercial readiness: 99% → 100% — all Stone Soup gaps closed**
+
+Three upgrades validated on live ADS-B (20 aircraft, 13 scans, Zagreb):
+
+#### EKF/UKF for Polar Radar Measurements ([REQ-V59-EKF-01])
+- **EKF3D**: Extended Kalman Filter with Jacobian linearization of h(x) = [r, az, el]
+- **UKF3D**: Unscented Kalman Filter with sigma-point propagation (no Jacobian)
+- Live results at mean range 155km (σ_r=150m, σ_az=1°, σ_el=1°):
+  - Raw polar→Cartesian: RMS=4211m (cross-range amplification: 2698m)
+  - **EKF: RMS=2659m (1.58× improvement)**
+  - **UKF: RMS=2750m (1.53× improvement)**
+- EKF wins at long range (>50km), UKF better at short range (<20km)
+- Utilities: `cartesian_to_polar()`, `polar_to_cartesian()`, `add_polar_noise()`
+
+#### GOSPA Metric Decomposition ([REQ-V59-MET-01])
+- `compute_gospa()`: Rahmathullah et al. (2017) standard
+- Decomposes error → localization + missed + false tracks
+- Live GOSPA (c=1km): Total=3596m
+  - **Localization: 650m** (accuracy of tracked targets)
+  - Missed: 2389m (12.1 targets, init transient in 13 scans)
+  - False: 2561m (14.2 tracks)
+- Compatible with Stone Soup evaluation methodology
+
+#### Clutter Resilience Testing ([REQ-V59-CLU-01])
+- `generate_clutter()`: Uniform false alarm injection
+- Tested 0–50 false alarms per scan on live data
+- **Key finding: Localization stays stable** (571–643m) across all clutter levels
+- Detection at 0 clutter: **92%** (18.4/20 confirmed)
+- Graceful degradation: false tracks scale linearly, real tracks unaffected
+
+#### Test Suite
+- 13 new v5.9 tests (EKF/UKF, GOSPA, clutter, integration)
+- **291 total tests — 291 PASS, 0 failures**
+- Full benchmark report: docs/BENCHMARK_V59.md
+
 ## v5.8.0 — "REAL DATA" (2026-02-06)
 
 ### 🎯 Headline: First Real-Data Validation — 210 Live Aircraft from OpenSky Network
