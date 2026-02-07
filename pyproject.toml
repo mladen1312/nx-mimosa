@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nx-mimosa"
-version = "6.0.1"
+version = "6.1.0"
 description = "Radar multi-target tracker — 5,000 targets in 40 ms, ECM detection, military ID, NATO output. C++ core + Python intelligence."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}

@@ -71,7 +71,7 @@ Every number in this table is reproducible at seed 42.
 | Detection rate | **99.8–100.6%** | All benchmarks |
 | Military forces in ID database | **17** (ICAO hex + callsign) | Source: `test_500plus_benchmark.py` |
 | Platform types in classifier | **111** | Source: `platform_db_v3.json` |
-| ECM types detected | **4** core + **6** classified | See [ECM detection](#ecm-detection) |
+| ECM types detected | **4** core + **6** classified + **4** ML-CFAR environment | See [ECM detection](#ecm-detection) |
 | Intent behaviours predicted | **16** (including UNKNOWN) | See [Intelligence](#intelligence-layer) |
 
 ---
@@ -118,7 +118,7 @@ cd cpp && pip install .  # requires Eigen3 + pybind11
 
 ## Architecture
 
-**9 modules · 11,493 lines · 71 classes · 352 tests**
+**10 modules · 12,980 lines · 78 classes · 397 tests**
 
 ### Filtering
 
@@ -153,6 +153,19 @@ Core `ECMDetector` in `nx_mimosa_mtt.py` detects 4 electronic countermeasure typ
 | Screening/blanking | Hit/miss dropout pattern |
 
 Intelligence layer `ECMStatus` in `nx_mimosa_intent_classifier.py` classifies 6 types for tactical assessment: noise jamming, RGPO, VGPO, DRFM repeater, chaff corridor, and multi-source.
+
+### Advanced ECCM (v6.1.0)
+
+`nx_mimosa_eccm.py` — ported from [QEDMMA Radar System](https://github.com/mladen1312/QEDMMA-Radar-System) FPGA RTL to Python. Three capabilities:
+
+| Module | Origin | Function |
+|--------|--------|----------|
+| `MLCFARDetector` | `ml_cfar_engine.sv` | 6-feature ML environment classifier (clear/clutter/noise jamming/deception) |
+| `JammerLocalizer` | `jammer_localizer.sv` | TDOA emitter geolocation with Kalman tracking (3+ receivers) |
+| `AdaptiveIntegrator` | `integration_controller.sv` | Dynamic R-matrix inflation, gate widening, coast extension |
+| `ECCMPipeline` | — | Integrated chain: classify → locate → adapt |
+
+ML-CFAR extracts 6 features per track per scan: power ratio, guard ratio, spectral flatness (kurtosis), temporal correlation (lag-1), range derivative, Doppler derivative. Decision tree classifies environment in O(1).
 
 ### Intelligence layer
 
@@ -290,6 +303,20 @@ if result['ecm_detected']:
     print(f"ECM: {result['ecm_types']} → {result['recommended_action']}")
 ```
 
+**Advanced ECCM (ML-CFAR + TDOA jammer localization):**
+```python
+from nx_mimosa_eccm import ECCMPipeline, EnvironmentClass
+
+eccm = ECCMPipeline(ml_window=20, enable_localizer=True)
+result = eccm.update(track_id=1, nis=35.0, innovation=innov, velocity=vel,
+                     rx_positions=rx_nodes, toa=toa_measurements, timestamp=t)
+
+if result['env_class'] != EnvironmentClass.CLEAR:
+    track.R *= result['params'].r_multiplier  # Inflate measurement noise
+    if result['emitter'] is not None:
+        print(f"Jammer at {result['emitter'].position}, power {result['emitter'].power_estimate_dBm} dBm")
+```
+
 **C++ accelerated (same API, 76× faster):**
 ```python
 from nx_mimosa.accel import MultiTargetTracker
@@ -335,6 +362,7 @@ print(f"Scan time: {tracker.scan_time_ms:.1f} ms")
 | v5.9.3 | LMB filter, 71 classes, 11,493 LOC | ✅ Done |
 | v6.0.0 | C++ core — 42 ms @ 5,000 targets | ✅ Done |
 | v6.0.1 | PyPI + 1,000/2,000 simulation + marketing update | ✅ Done |
+| v6.1.0 | QEDMMA ECCM port: ML-CFAR, TDOA localizer, adaptive integration | ✅ Done |
 | v6.1 | FPGA proof-of-concept (Xilinx Versal) | Q2 2026 |
 | v6.2 | Multi-radar fusion service | Q3 2026 |
 | v7.0 | DO-254 certification path | Q4 2026 |
