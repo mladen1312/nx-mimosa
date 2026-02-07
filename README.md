@@ -21,6 +21,8 @@ for scan in radar_scans:
     tracks = tracker.process_scan(measurements)
 ```
 
+![Fighter Intercept Demo — 7g turn, 30 clutter/scan, 12m RMSE](reports/fighter_intercept_demo.gif)
+
 11,493 lines across 9 modules. 62 unique classes. 340 tests. 8 filter types (KF/EKF/UKF/IMM/PF/GM-PHD/CPHD/LMB), three association engines (GNN/JPDA/MHT), 6-sensor fusion engine, automatic ECM detection (5 types), military aircraft identification (30+ forces), platform classification (111 types), intent prediction (16 behaviours), coordinate transforms (geodetic/ENU/ECEF/polar), dataset adapters (nuScenes/CARLA/RADIATE), dual-mode NATO outputs (ASTERIX Cat048/Link-16), and synthetic scenario generation — with zero mandatory dependencies beyond NumPy and SciPy.
 
 The core tracker is a single 4,236-line Python file you can deploy by copying. The full library adds intelligence, fusion, coordinates, and dataset modules.
